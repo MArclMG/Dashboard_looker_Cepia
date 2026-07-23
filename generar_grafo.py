@@ -1,4 +1,6 @@
 import os
+import re
+import unicodedata
 import pandas as pd
 import gspread
 import google.auth
@@ -7,15 +9,42 @@ from pyvis.network import Network
 
 def normalizar_texto(val):
     """
-    Convierte cualquier valor a string, elimina espacios en blanco adicionales
-    y convierte a mayúsculas para unificar nodos duplicados.
+    Normaliza el texto para unificar nodos duplicados:
+    - Remueve tildes/acentos.
+    - Convierte a mayúsculas.
+    - Estandariza variaciones de 'LIMITADA' / 'LTDA' / 'LTDA.'.
+    - Limpia espacios extra y signos de puntuación sobrantes.
     """
     if pd.isna(val) or val is None:
         return ""
+    
     texto = str(val).strip()
-    if texto.lower() == "nan":
+    if texto.lower() == "nan" or not texto:
         return ""
-    return " ".join(texto.upper().split())
+
+    # 1. Remover tildes y diacríticos (ej. "Agrícola" -> "Agricola")
+    texto = unicodedata.normalize('NFD', texto)
+    texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn')
+    
+    # 2. Convertir a mayúsculas
+    texto = texto.upper()
+
+    # 3. Normalizar variaciones de "LIMITADA" y "LTDA" usando Expresiones Regulares (Regex)
+    # Coincide con 'LIMITADA.', 'LIMITADA', 'LTDA.', 'LTDA' al final de la cadena o como palabra completa
+    texto = re.sub(r'\b(LIMITADA\.|LIMITADA|LTDA\.|LTDA)\b', 'LTDA', texto)
+    
+    # Normalizar otras formas comunes si fuera necesario (ej. S.A. -> SA)
+    texto = re.sub(r'\b(S\.A\.|S\.A)\b', 'SA', texto)
+    texto = re.sub(r'\b(S\.P\.A\.|S\.P\.A|SPA\.)\b', 'SPA', texto)
+
+    # 4. Remover puntos sueltos o residuales excepto espacios
+    texto = re.sub(r'\.', '', texto)
+
+    # 5. Colapsar espacios múltiples en uno solo
+    texto = " ".join(texto.split())
+
+    return texto
+
 
 def main():
     print("➡️ Autenticando en GCP mediante Workload Identity Federation...")
@@ -39,7 +68,6 @@ def main():
 
     print("➡️ Procesando datos y recolectando listas de filtros...")
     
-    # Conjuntos para alimentar los selectores flotantes
     bonos_set = set()
     endosatarios_set = set()
     beneficiarios_set = set()
@@ -75,7 +103,6 @@ def main():
             color="#005f73", 
             shape="dot", 
             size=28,
-            group="bono",
             font={"size": 14, "face": "arial", "bold": True}
         )
 
@@ -88,7 +115,6 @@ def main():
                 color="#2a9d8f", 
                 shape="square", 
                 size=20,
-                group="beneficiario",
                 font={"size": 11, "face": "arial"}
             )
 
@@ -118,7 +144,6 @@ def main():
                     color="#ee9b00", 
                     shape="ellipse",
                     size=18,
-                    group="endosatario",
                     font={"size": 11, "face": "arial"}
                 )
                 
@@ -152,9 +177,9 @@ def main():
     output_path = os.path.join("docs", "index.html")
     net.write_html(output_path)
 
-    # --- INYECCIÓN DEL PANEL DE FILTROS EN HTML / JS ---
+    # Inyección del panel de controles UI
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo con panel de filtros listo en: {output_path}")
+    print(f"✅ Grafo con normalización avanzada de nombres generado en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
@@ -162,11 +187,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
     with open(html_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # Opciones ordenadas para los desplegables
     opts_bonos = "".join([f'<option value="{b}">{b}</option>' for b in sorted(bonos)])
     opts_endosatarios = "".join([f'<option value="{e}">{e}</option>' for e in sorted(endosatarios)])
     opts_beneficiarios = "".join([f'<option value="{b}">{b}</option>' for b in sorted(beneficiarios)])
-    opts_cant = "".join([f'<option value="{c}">{c}</option>' for c in sorted(cant_endosos)])
 
     panel_html = f"""
     <style>
@@ -263,7 +286,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
     </script>
     """
 
-    # Inyectar justo antes de cerrar el </body>
     new_content = content.replace("</body>", f"{panel_html}\n</body>")
 
     with open(html_path, 'w', encoding='utf-8') as f:
