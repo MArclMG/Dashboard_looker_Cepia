@@ -2,16 +2,32 @@ import os
 import pandas as pd
 import gspread
 import google.auth
+from google.auth.transport.requests import Request
 from pyvis.network import Network
 
 def main():
     print("➡️ Autenticando en GCP mediante Workload Identity Federation...")
-    credentials, project = google.auth.default()
+    
+    # Definir los scopes requeridos para Google Sheets y Drive
+    SCOPES = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    # Obtener credenciales explícitamente con scopes
+    credentials, project = google.auth.default(scopes=SCOPES)
+    
+    # Forzar el refresco de token si es necesario
+    if not credentials.valid:
+        credentials.refresh(Request())
+
     gc = gspread.authorize(credentials)
 
     spreadsheet_url = os.environ.get("SPREADSHEET_URL")
     print("➡️ Conectando a Google Sheets...")
     sh = gc.open_by_url(spreadsheet_url)
+    
+    # ... resto del código sin cambios ...
     
     # Toma la primera hoja de trabajo
     sheet = sh.sheet1 
