@@ -2,9 +2,8 @@ name: Generar y Publicar Grafo de Endosos
 
 on:
   schedule:
-    # Se ejecuta automáticamente cada día a las 06:00 UTC (Ajustable)
     - cron: '0 6 * * *'
-  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
@@ -13,7 +12,7 @@ jobs:
     permissions:
       contents: read
       pages: write
-      id-token: write # REQUERIDO para Workload Identity Federation
+      id-token: write
 
     steps:
       - name: Checkout del repositorio
@@ -24,7 +23,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # AUTENTICACIÓN KEYLESS CON GCP VIA WIF
       - name: Autenticar en Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -38,11 +36,10 @@ jobs:
 
       - name: Ejecutar script de extracción y generación
         env:
-          SPREADSHEET_URL: ${{ secrets.SPREADSHEET_URL }}  # 
+          SPREADSHEET_URL: ${{ secrets.SPREADSHEET_URL }}
         run: |
           python generar_grafo.py
 
-      # DESPLIEGUE AUTOMÁTICO A GITHUB PAGES
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
 
