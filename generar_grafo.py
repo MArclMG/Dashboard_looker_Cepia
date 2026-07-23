@@ -7,89 +7,83 @@ from pyvis.network import Network
 
 def main():
     print("➡️ Autenticando en GCP mediante Workload Identity Federation...")
-    
-    # Definir los scopes requeridos para Google Sheets y Drive
-    SCOPES = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-
-    # Obtener credenciales explícitamente con scopes
-    credentials, project = google.auth.default(scopes=SCOPES)
-    
-    # Forzar el refresco de token si es necesario
-    if not credentials.valid:
-        credentials.refresh(Request())
-
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+credentials, project = google.auth.default(scopes=SCOPES)
+if not credentials.valid: credentials.refresh(Request())
     gc = gspread.authorize(credentials)
 
-    spreadsheet_url = os.environ.get("SPREADSHEET_URL")
+spreadsheet_url = os.environ.get("SPREADSHEET_URL")
     print("➡️ Conectando a Google Sheets...")
-    sh = gc.open_by_url(spreadsheet_url)
-    
-    # ... resto del código sin cambios ...
-    
-    # Toma la primera hoja de trabajo
+sh = gc.open_by_url(spreadsheet_url)
     sheet = sh.sheet1 
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    # Limpiar espacios en los nombres de las columnas por seguridad
+    # Limpiar espacios en los nombres de las columnas
     df.columns = df.columns.str.strip()
-    print("Columnas detectadas:", df.columns.tolist())
 
-    print("➡️ Generando grafo con PyVis...")
-    net = Network(height="750px", width="100%", directed=True, notebook=False)
+    print("➡️ Generando grafo con PyVis (ahora con etiquetas)...")
+    net = Network(height="750px", width="100%", directed=True, notebook=False, bgcolor="#f4f4f4", font_color="black")
     net.barnes_hut()
 
     for _, row in df.iterrows():
-        cepia = str(row.get('N° Cepia', '')).strip()
-        beneficiario = str(row.get('Beneficiario', '')).strip()
+        # Extraer IDs únicos de las columnas clave
+        cepia_id = str(row.get('N° Cepia', '')).strip()
+        beneficiario_id = str(row.get('Beneficiario', '')).strip()
 
-        if not cepia:
-            continue  # Omitir filas vacías
+        if not cepia_id: continue # Omitir filas sin ID
 
-        # Agregar nodo inicial (Cepia) y nodo final (Beneficiario)
-        net.add_node(cepia, label=f"Cepia: {cepia}", color="#1f77b4", shape="dot")
-        if beneficiario:
-            net.add_node(beneficiario, label=f"Beneficiario: {beneficiario}", color="#2ca02c", shape="square")
+        # --- CONFIGURAR NODOS PRINCIPALES ---
+        
+        # 1. Nodo CEPIA: Label visible y Título hover
+        net.add_node(cepia_id, 
+                     label=f"Cepia\n{cepia_id}",          # <--- ETIQUETA VISIBLE (\n es salto de línea)
+                     title=f"<b>N° Cepia:</b> {cepia_id}", # <--- HOVER (soporta HTML)
+                     color="#1f77b4", shape="dot", size=25)
 
-        # Detectar dinámicamente las columnas de endosatarios
-        endosatarios = []
+        # 2. Nodo BENEFICIARIO: Label visible y Título hover
+        if beneficiario_id:
+            net.add_node(beneficiario_id, 
+                         label=f"Beneficiario\n{beneficiario_id}", # <--- ETIQUETA VISIBLE
+                         title=f"<b>Destinatario Final:</b><br>{beneficiario_id}", # <--- HOVER
+                         color="#2ca02c", shape="square", size=20)
+
+        # --- CONFIGURAR ENDOSATARIOS DINÁMICOS ---
+        
+        # Recorrer la cadena de endosos (A -> B -> C...)
+        nodo_actual = cepia_id
         i = 1
         while f'endosatario_{i}' in df.columns:
-            endosatario_val = str(row.get(f'endosatario_{i}', '')).strip()
+            endosatario_id = str(row.get(f'endosatario_{i}', '')).strip()
             fecha_val = str(row.get(f'endoso_fecha_{i}', '')).strip()
             
-            # Solo consideramos si el endosatario tiene valor no vacío
-            if endosatario_val and endosatario_val.lower() != 'nan':
-                endosatarios.append({'nombre': endosatario_val, 'fecha': fecha_val})
+            if endosatario_id and endosatario_id.lower() != 'nan':
+                # Nodo ENDOSATARIO: Label y Hover con fecha
+                net.add_node(endosatario_id, 
+                             label=f"{endosatario_id}", # <--- ETIQUETA VISIBLE
+                             title=f"<b>Endosatario {i}:</b> {endosatario_id}<br><b>Fecha:</b> {fecha_val}", # <--- HOVER
+                             color="#ff7f0e", shape="ellipse")
+                
+                # Arista con etiqueta de Fecha visible y Hover
+                label_arista = f"{fecha_val}" if fecha_val else ""
+                net.add_edge(nodo_actual, endosatario_id, 
+                             label=label_arista,          # <--- FECHA VISIBLE EN LA LÍNEA
+                             title=f"Endoso {i}: {label_arista}") # <--- HOVER EN LA LÍNEA
+                
+                nodo_actual = endosatario_id
             i += 1
 
-        # Construir aristas (conexiones)
-        nodo_actual = cepia
+        # Conectar el último eslabón al Beneficiario
+        if beneficiario_id:
+            net.add_edge(nodo_actual, beneficiario_id, 
+                         label="➡️ Beneficiario",   # <--- ETIQUETA VISIBLE
+                         title="Destino Final", color="#2ca02c", weight=2)
 
-        for idx, endoso in enumerate(endosatarios):
-            siguiente_nodo = endoso['nombre']
-            label_fecha = f"Fecha: {endoso['fecha']}" if endoso['fecha'] else ""
-            
-            # Nodo intermedio (Endosatario)
-            net.add_node(siguiente_nodo, label=f"Endosatario: {siguiente_nodo}", color="#ff7f0e", shape="ellipse")
-            
-            # Conexión
-            net.add_edge(nodo_actual, siguiente_nodo, title=label_fecha, label=label_fecha)
-            nodo_actual = siguiente_nodo
-
-        # Conectar el último endosatario (o la Cepia directamente si no hay endosos) al Beneficiario
-        if beneficiario:
-            net.add_edge(nodo_actual, beneficiario, title="Destino Final", label="Beneficiario")
-
-    # Asegurar directorio de salida para GH Pages
+    # Asegurar directorio y escribir HTML
     os.makedirs("docs", exist_ok=True)
     output_path = os.path.join("docs", "index.html")
-    
     net.write_html(output_path)
-    print(f"✅ Grafo generado exitosamente en: {output_path}")
+    print(f"✅ Grafo generado con etiquetas en: {output_path}")
 
 if __name__ == "__main__":
     main()
