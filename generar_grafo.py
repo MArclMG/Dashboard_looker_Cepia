@@ -8,43 +8,18 @@ from google.auth.transport.requests import Request
 from pyvis.network import Network
 
 def normalizar_texto(val):
-    """
-    Normaliza el texto para unificar nodos duplicados:
-    - Remueve tildes/acentos.
-    - Convierte a mayúsculas.
-    - Estandariza variaciones de 'LIMITADA' / 'LTDA' / 'LTDA.'.
-    - Limpia espacios extra y signos de puntuación sobrantes.
-    """
     if pd.isna(val) or val is None:
         return ""
-    
     texto = str(val).strip()
     if texto.lower() == "nan" or not texto:
         return ""
-
-    # 1. Remover tildes y diacríticos (ej. "Agrícola" -> "Agricola")
     texto = unicodedata.normalize('NFD', texto)
-    texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn')
-    
-    # 2. Convertir a mayúsculas
-    texto = texto.upper()
-
-    # 3. Normalizar variaciones de "LIMITADA" y "LTDA" usando Expresiones Regulares (Regex)
-    # Coincide con 'LIMITADA.', 'LIMITADA', 'LTDA.', 'LTDA' al final de la cadena o como palabra completa
+    texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn').upper()
     texto = re.sub(r'\b(LIMITADA\.|LIMITADA|LTDA\.|LTDA)\b', 'LTDA', texto)
-    
-    # Normalizar otras formas comunes si fuera necesario (ej. S.A. -> SA)
     texto = re.sub(r'\b(S\.A\.|S\.A)\b', 'SA', texto)
     texto = re.sub(r'\b(S\.P\.A\.|S\.P\.A|SPA\.)\b', 'SPA', texto)
-
-    # 4. Remover puntos sueltos o residuales excepto espacios
     texto = re.sub(r'\.', '', texto)
-
-    # 5. Colapsar espacios múltiples en uno solo
-    texto = " ".join(texto.split())
-
-    return texto
-
+    return " ".join(texto.split())
 
 def main():
     print("➡️ Autenticando en GCP mediante Workload Identity Federation...")
@@ -162,7 +137,6 @@ def main():
 
         cant_endosos_set.add(num_endosos)
 
-        # Conexión final al Beneficiario
         if beneficiario_id:
             net.add_edge(
                 nodo_actual, 
@@ -177,13 +151,11 @@ def main():
     output_path = os.path.join("docs", "index.html")
     net.write_html(output_path)
 
-    # Inyección del panel de controles UI
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo con normalización avanzada de nombres generado en: {output_path}")
+    print(f"✅ Grafo con tramado de ruta y atenuación generado en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
-    """Inyecta un panel UI estilizado y lógica JS para centrar y filtrar el grafo."""
     with open(html_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
@@ -239,21 +211,21 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
 
     <div id="filter-panel">
         <label>Bono (N° Cepia):
-            <select id="sel-bono" onchange="focusNode(this.value)">
+            <select id="sel-bono" onchange="highlightPath(this.value, 'bono')">
                 <option value="">-- Todos --</option>
                 {opts_bonos}
             </select>
         </label>
 
         <label>Endosatario:
-            <select id="sel-endosatario" onchange="focusNode(this.value)">
+            <select id="sel-endosatario" onchange="highlightPath(this.value, 'endosatario')">
                 <option value="">-- Todos --</option>
                 {opts_endosatarios}
             </select>
         </label>
 
         <label>Beneficiario:
-            <select id="sel-beneficiario" onchange="focusNode(this.value)">
+            <select id="sel-beneficiario" onchange="highlightPath(this.value, 'beneficiario')">
                 <option value="">-- Todos --</option>
                 {opts_beneficiarios}
             </select>
@@ -263,23 +235,98 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
     </div>
 
     <script>
-        function focusNode(nodeId) {{
-            if (!nodeId) return;
-            try {{
-                network.focus(nodeId, {{
-                    scale: 1.2,
-                    animation: {{ duration: 1000, easingFunction: "easeInOutQuad" }}
-                }});
-                network.selectNodes([nodeId]);
-            }} catch(e) {{
-                console.warn("Nodo no encontrado:", nodeId);
+        var allNodes = null;
+        var allEdges = null;
+
+        // Guardar estado original de los elementos una vez cargada la red
+        network.once("afterDrawing", function () {{
+            allNodes = nodes.get({{returnType: "Object"}});
+            allEdges = edges.get({{returnType: "Object"}});
+        }});
+
+        function highlightPath(selectedNodeId, type) {{
+            if (!selectedNodeId) {{
+                resetZoom();
+                return;
             }}
+
+            // Sincronizar selectores
+            if (type !== 'bono') document.getElementById('sel-bono').value = "";
+            if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
+            if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
+
+            var connectedNodes = new Set();
+            var connectedEdges = new Set();
+
+            // Algoritmo de rastreo en ambas direcciones (origen <-> destino)
+            function traceConnected(nodeId) {{
+                connectedNodes.add(nodeId);
+                
+                // Obtener aristas conectadas al nodo
+                var nodeEdges = network.getConnectedEdges(nodeId);
+                nodeEdges.forEach(function(edgeId) {{
+                    var edge = edges.get(edgeId);
+                    connectedEdges.add(edgeId);
+                    
+                    if (edge.from === nodeId && !connectedNodes.has(edge.to)) {{
+                        traceConnected(edge.to);
+                    }}
+                    if (edge.to === nodeId && !connectedNodes.has(edge.from)) {{
+                        traceConnected(edge.from);
+                    }}
+                }});
+            }}
+
+            traceConnected(selectedNodeId);
+
+            // Modificar opacidad de todos los nodos
+            var updateNodes = [];
+            for (var nodeId in allNodes) {{
+                if (connectedNodes.has(nodeId)) {{
+                    updateNodes.push({{ id: nodeId, opacity: 1.0, font: {{ color: '#000000' }} }});
+                }} else {{
+                    updateNodes.push({{ id: nodeId, opacity: 0.1, font: {{ color: 'rgba(0,0,0,0.1)' }} }});
+                }}
+            }}
+            nodes.update(updateNodes);
+
+            // Modificar opacidad de todas las aristas/líneas
+            var updateEdges = [];
+            for (var edgeId in allEdges) {{
+                if (connectedEdges.has(edgeId)) {{
+                    updateEdges.push({{ id: edgeId, opacity: 1.0 }});
+                }} else {{
+                    updateEdges.push({{ id: edgeId, opacity: 0.05 }});
+                }}
+            }}
+            edges.update(updateEdges);
+
+            // Enfocar la cámara en el grupo de nodos seleccionados
+            network.fit({{
+                nodes: Array.from(connectedNodes),
+                animation: {{ duration: 1000, easingFunction: "easeInOutQuad" }}
+            }});
         }}
 
         function resetZoom() {{
             document.getElementById('sel-bono').value = "";
             document.getElementById('sel-endosatario').value = "";
             document.getElementById('sel-beneficiario').value = "";
+
+            if (allNodes && allEdges) {{
+                var updateNodes = [];
+                for (var nodeId in allNodes) {{
+                    updateNodes.push({{ id: nodeId, opacity: 1.0, font: {{ color: '#333333' }} }});
+                }}
+                nodes.update(updateNodes);
+
+                var updateEdges = [];
+                for (var edgeId in allEdges) {{
+                    updateEdges.push({{ id: edgeId, opacity: 1.0 }});
+                }}
+                edges.update(updateEdges);
+            }}
+
             network.fit({{ animation: {{ duration: 1000 }} }});
             network.unselectAll();
         }}
