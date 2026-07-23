@@ -1,35 +1,56 @@
-name: Generar Grafo de Endosos
+name: Generar y Publicar Grafo de Endosos
 
 on:
   schedule:
-    # Se ejecuta automáticamente todos los días a las 08:00 AM UTC
-    - cron: '0 8 * * *'
-  workflow_dispatch: # Permite ejecutarlo manualmente desde la web de GitHub con un clic
+    # Se ejecuta automáticamente cada día a las 06:00 UTC (Ajustable)
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write # REQUERIDO para Workload Identity Federation
+
     steps:
-      - name: Descargar el código del repositorio
-        uses: actions/checkout@v3
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
 
       - name: Configurar Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+
+      # AUTENTICACIÓN KEYLESS CON GCP VIA WIF
+      - name: Autenticar en Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Instalar dependencias
         run: |
-          pip install pandas pyvis gspread google-auth
+          python -m pip install --upgrade pip
+          pip install pandas gspread google-auth pyvis
 
-      - name: Ejecutar script de generación del grafo
+      - name: Ejecutar script de extracción y generación
         env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_URL: ${{ secrets.SPREADSHEET_URL }}  # 
         run: |
           python generar_grafo.py
 
-      - name: Desplegar automáticamente a GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      # DESPLIEGUE AUTOMÁTICO A GITHUB PAGES
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Subir artefacto de Pages
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist # O la carpeta donde guardes tu index.html
+          path: 'docs/'
+
+      - name: Desplegar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
