@@ -25,45 +25,56 @@ def main():
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    # Limpiar espacios en los nombres de las columnas
     df.columns = df.columns.str.strip()
 
-    print("➡️ Generando grafo con PyVis (con etiquetas)...")
-    net = Network(height="750px", width="100%", directed=True, notebook=False, bgcolor="#f4f4f4", font_color="black")
-    net.barnes_hut()
+    print("➡️ Generando grafo enfocado en la trazabilidad del Bono (N° Cepia)...")
+    
+    net = Network(
+        height="750px", 
+        width="100%", 
+        directed=True, 
+        notebook=False, 
+        bgcolor="#f8f9fa", 
+        font_color="#333333"
+    )
+    
+    # Habilitar panel lateral para filtrar por nodos / buscar Cepias o Endosatarios
+    net.show_buttons(filter_=['nodes', 'physics'])
+    
+    # Configuración de física para que los textos se lean bien y no se amontonen
+    net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=120)
 
     for _, row in df.iterrows():
-        # Extraer IDs únicos de las columnas clave
         cepia_id = str(row.get('N° Cepia', '')).strip()
         beneficiario_id = str(row.get('Beneficiario', '')).strip()
 
         if not cepia_id: 
-            continue # Omitir filas sin ID
+            continue
 
-        # --- CONFIGURAR NODOS PRINCIPALES ---
-        
-        # 1. Nodo CEPIA: Label visible y Título hover
+        # 1. NODO PRINCIPAL: Bono / N° Cepia (Identificador Único)
         net.add_node(
             cepia_id, 
-            label=f"Cepia\n{cepia_id}", 
-            title=f"<b>N° Cepia:</b> {cepia_id}", 
-            color="#1f77b4", 
+            label=f"Bono: {cepia_id}", 
+            title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
+            color="#005f73", 
             shape="dot", 
-            size=25
+            size=28,
+            font={"size": 14, "face": "arial", "bold": True}
         )
 
-        # 2. Nodo BENEFICIARIO: Label visible y Título hover
+        # 2. NODO FINAL: Beneficiario (Informativo)
         if beneficiario_id:
             net.add_node(
                 beneficiario_id, 
-                label=f"Beneficiario\n{beneficiario_id}", 
-                title=f"<b>Destinatario Final:</b><br>{beneficiario_id}", 
-                color="#2ca02c", 
+                label=f"Beneficiario:\n{beneficiario_id}", 
+                title=f"<b>Beneficiario:</b> {beneficiario_id}", 
+                color="#2a9d8f", 
                 shape="square", 
-                size=20
+                size=20,
+                font={"size": 11, "face": "arial"}
             )
 
-        # --- CONFIGURAR ENDOSATARIOS DINÁMICOS ---
+        # 3. CADENA DE ENDOSOS DEL BONO
         nodo_actual = cepia_id
         i = 1
         while f'endosatario_{i}' in df.columns:
@@ -71,43 +82,46 @@ def main():
             fecha_val = str(row.get(f'endoso_fecha_{i}', '')).strip()
             
             if endosatario_id and endosatario_id.lower() != 'nan':
-                # Nodo ENDOSATARIO: Label y Hover con fecha
+                # Nodo del Endosatario
                 net.add_node(
                     endosatario_id, 
                     label=f"{endosatario_id}", 
-                    title=f"<b>Endosatario {i}:</b> {endosatario_id}<br><b>Fecha:</b> {fecha_val}", 
-                    color="#ff7f0e", 
-                    shape="ellipse"
+                    title=f"<b>Endosatario {i}:</b> {endosatario_id}<br><b>Fecha Endoso:</b> {fecha_val}", 
+                    color="#ee9b00", 
+                    shape="ellipse",
+                    size=18,
+                    font={"size": 11, "face": "arial"}
                 )
                 
-                # Arista con etiqueta de Fecha visible y Hover
-                label_arista = f"{fecha_val}" if fecha_val else ""
+                # Arista que muestra la fecha del paso del bono
+                label_arista = f"Endoso {i}: {fecha_val}" if fecha_val else f"Endoso {i}"
                 net.add_edge(
                     nodo_actual, 
                     endosatario_id, 
                     label=label_arista, 
-                    title=f"Endoso {i}: {label_arista}"
+                    title=f"Fecha: {fecha_val}",
+                    color="#ca6702",
+                    font={"size": 9, "align": "top"}
                 )
                 
                 nodo_actual = endosatario_id
             i += 1
 
-        # Conectar el último eslabón al Beneficiario
+        # Cierre del flujo: Conectar el último endosatario (o la Cepia directa) al Beneficiario
         if beneficiario_id:
             net.add_edge(
                 nodo_actual, 
                 beneficiario_id, 
-                label="➡️ Beneficiario", 
-                title="Destino Final", 
-                color="#2ca02c", 
-                weight=2
+                label="Asignado a", 
+                title="Registro de Beneficiario", 
+                color="#94d2bd", 
+                dashes=True # Línea punteada para indicar que es un dato de cierre informativo
             )
 
-    # Asegurar directorio y escribir HTML
     os.makedirs("docs", exist_ok=True)
     output_path = os.path.join("docs", "index.html")
     net.write_html(output_path)
-    print(f"✅ Grafo generado con etiquetas en: {output_path}")
+    print(f"✅ Grafo de trazabilidad generado exitosamente en: {output_path}")
 
 if __name__ == "__main__":
     main()
