@@ -314,6 +314,32 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         #filter-panel button:hover {{
             background-color: #A8455B;
         }}
+
+        /* ESTILIZADO DE TARJETAS TAG PARA TOOLTIPS (HOVER) */
+        div.vis-tooltip {{
+            position: absolute !important;
+            background-color: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+            font-family: Arial, sans-serif !important;
+            z-index: 9999 !important;
+            pointer-events: none;
+        }}
+        .custom-tooltip-card {{
+            background: #FFFFFF;
+            border: 1px solid #E0DAD3;
+            border-left: 4px solid #C65A72;
+            border-radius: 6px;
+            padding: 8px 12px;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+            color: #2B2B2B;
+            font-size: 12px;
+            line-height: 1.4;
+            max-width: 300px;
+        }}
+        .custom-tooltip-card strong {{
+            color: #1A1A1A;
+        }}
     </style>
 
     <div id="filter-panel">
@@ -353,6 +379,25 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var initialPositions = {{}};
         var currentIsolatedValue = null;
         var currentIsolatedType = null;
+
+        // PARSER DE TOOLTIP HTML PARA EVITAR MOSTRAR ETIQUETAS BR / B
+        network.once("beforeDrawing", function() {{
+            var allNodes = nodes.get();
+            var updates = [];
+
+            allNodes.forEach(function(node) {{
+                if (node.title && typeof node.title === 'string') {{
+                    var container = document.createElement('div');
+                    container.className = 'custom-tooltip-card';
+                    container.innerHTML = node.title;
+                    updates.push({{ id: node.id, title: container }});
+                }}
+            }});
+
+            if (updates.length > 0) {{
+                nodes.update(updates);
+            }}
+        }});
 
         // 1. REGISTRO FÍSICO INICIAL Y COORDENADAS
         network.once("stabilizationIterationsDone", function() {{
@@ -552,6 +597,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     """
 
     new_content = content.replace("</body>", f"{panel_html}\n</body>")
+
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
 
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
