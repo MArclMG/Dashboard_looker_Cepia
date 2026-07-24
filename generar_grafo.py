@@ -224,7 +224,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
-    print(f"✅ Grafo procesado con función Toggle de resaltado en: {output_path}")
+    print(f"✅ Grafo procesado con aislamiento y restablecimiento de posiciones en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
@@ -301,21 +301,21 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         </label>
 
         <label>Bono (N° Cepia):
-            <select id="sel-bono" onchange="highlightPath(this.value, 'bono')">
+            <select id="sel-bono" onchange="applyIsolationFilter(this.value, 'bono')">
                 <option value="">-- Todos --</option>
                 {opts_bonos}
             </select>
         </label>
 
         <label>Endosatario:
-            <select id="sel-endosatario" onchange="highlightPath(this.value, 'endosatario')">
+            <select id="sel-endosatario" onchange="applyIsolationFilter(this.value, 'endosatario')">
                 <option value="">-- Todos --</option>
                 {opts_endosatarios}
             </select>
         </label>
 
         <label>Beneficiario:
-            <select id="sel-beneficiario" onchange="highlightPath(this.value, 'beneficiario')">
+            <select id="sel-beneficiario" onchange="applyIsolationFilter(this.value, 'beneficiario')">
                 <option value="">-- Todos --</option>
                 {opts_beneficiarios}
             </select>
@@ -327,11 +327,18 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     <script>
         var originalNodes = [];
         var originalEdges = [];
-        var currentHighlightedValue = null;
-        var currentHighlightedType = null;
+        var initialPositions = {{}};
+        var currentIsolatedValue = null;
+        var currentIsolatedType = null;
 
+        // 1. CONGELAR FÍSICA Y CAPTURAR COORDENADAS INICIALES EXACTAS
         network.once("stabilizationIterationsDone", function() {{
             network.setOptions({{ physics: {{ enabled: false }} }});
+            var allIds = nodes.getIds();
+            var pos = network.getPositions(allIds);
+            allIds.forEach(function(id) {{
+                initialPositions[id] = {{ x: pos[id].x, y: pos[id].y }};
+            }});
         }});
 
         network.once("afterDrawing", function () {{
@@ -339,14 +346,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
+        // 2. FILTRO POR MÍNIMO DE ENDOSOS
         function filterByEndosos(minCount) {{
             minCount = parseInt(minCount, 10);
-
             clearHighlightState();
-
-            document.getElementById('sel-bono').value = "";
-            document.getElementById('sel-endosatario').value = "";
-            document.getElementById('sel-beneficiario').value = "";
 
             if (minCount === 0) {{
                 nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
@@ -364,122 +367,23 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 validNodeIds.add(edge.to);
             }});
 
-            var edgeUpdates = originalEdges.map(function(edge) {{
-                return {{
-                    id: edge.id,
-                    hidden: edge.cantEndosos < minCount
-                }};
-            }});
-            edges.update(edgeUpdates);
-
-            var nodeUpdates = originalNodes.map(function(node) {{
-                return {{
-                    id: node.id,
-                    hidden: !validNodeIds.has(node.id)
-                }};
-            }});
-            nodes.update(nodeUpdates);
+            edges.update(originalEdges.map(e => ({{ id: e.id, hidden: e.cantEndosos < minCount }})));
+            nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: !validNodeIds.has(n.id) }})));
         }}
 
-        network.on("click", function (params) {{
-            setTimeout(function() {{ network.unselectAll(); }}, 50);
+        // 3. AISLAMIENTO EXCLUSIVO DE NODOS (BONO / ENDOSATARIO / BENEFICIARIO)
+        function applyIsolationFilter(selectedValue, type) {{
+            if (type !== 'bono') document.getElementById('sel-bono').value = "";
+            if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
+            if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
 
-            if (params.nodes.length > 0) {{
-                var selectedNodeId = params.nodes[0];
-                var clickedNode = nodes.get(selectedNodeId);
-
-                if (clickedNode) {{
-                    var type = clickedNode.group;
-                    
-                    // TOGGLE: Si se vuelve a presionar el mismo nodo, se deselecciona
-                    if (currentHighlightedValue === selectedNodeId && currentHighlightedType === type) {{
-                        clearHighlightState();
-                        return;
-                    }}
-
-                    if (type === 'bono') document.getElementById('sel-bono').value = selectedNodeId;
-                    else if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedNodeId;
-                    else if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedNodeId;
-
-                    highlightPath(selectedNodeId, type);
-                }}
-            }} else if (params.edges.length > 0) {{
-                var edgeId = params.edges[0];
-                var clickedEdge = edges.get(edgeId);
-
-                if (clickedEdge && clickedEdge.bono) {{
-                    var bonoId = clickedEdge.bono;
-
-                    // TOGGLE PARA ARISTAS
-                    if (currentHighlightedValue === bonoId && currentHighlightedType === 'bono') {{
-                        clearHighlightState();
-                        return;
-                    }}
-
-                    document.getElementById('sel-bono').value = bonoId;
-                    highlightPath(bonoId, 'bono');
-                }}
-            }} else {{
-                // Clic en el fondo deselecciona
-                clearHighlightState();
-            }}
-        }});
-
-        function clearHighlightState() {{
-            currentHighlightedValue = null;
-            currentHighlightedType = null;
-
-            document.getElementById('sel-bono').value = "";
-            document.getElementById('sel-endosatario').value = "";
-            document.getElementById('sel-beneficiario').value = "";
-
-            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
-
-            // Restaurar bordes y colores base respetando el filtro de endosos activo
-            var updateEdges = originalEdges.map(function(edge) {{
-                return {{
-                    id: edge.id,
-                    color: {{ color: '#B9B4AE', highlight: '#C65A72' }},
-                    width: 1.5,
-                    hidden: minCount > 0 ? edge.cantEndosos < minCount : false
-                }};
-            }});
-            edges.update(updateEdges);
-
-            var validNodeIds = new Set();
-            if (minCount > 0) {{
-                originalEdges.filter(e => e.cantEndosos >= minCount).forEach(e => {{
-                    validNodeIds.add(e.from);
-                    validNodeIds.add(e.to);
-                }});
-            }}
-
-            var updateNodes = originalNodes.map(function(node) {{
-                return {{
-                    id: node.id,
-                    color: node.color,
-                    borderWidth: 1,
-                    hidden: minCount > 0 ? !validNodeIds.has(node.id) : false
-                }};
-            }});
-            nodes.update(updateNodes);
-        }}
-
-        function highlightPath(selectedValue, type) {{
             if (!selectedValue) {{
                 clearHighlightState();
                 return;
             }}
 
-            // Limpiar estado anterior para evitar superposición de resaltados
-            clearHighlightState();
-
-            currentHighlightedValue = selectedValue;
-            currentHighlightedType = type;
-
-            if (type === 'bono') document.getElementById('sel-bono').value = selectedValue;
-            if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedValue;
-            if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedValue;
+            currentIsolatedValue = selectedValue;
+            currentIsolatedType = type;
 
             var activeBonos = new Set();
             var activeNodes = new Set();
@@ -487,7 +391,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             if (type === 'bono') {{
                 activeBonos.add(selectedValue);
+                activeNodes.add(selectedValue);
             }} else {{
+                activeNodes.add(selectedValue);
                 originalEdges.forEach(function(edge) {{
                     if (edge.from === selectedValue || edge.to === selectedValue) {{
                         if (edge.bono) activeBonos.add(edge.bono);
@@ -503,37 +409,87 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }}
             }});
 
-            var updateEdges = [];
-            activeEdges.forEach(function(edgeId) {{
-                updateEdges.push({{
-                    id: edgeId,
-                    color: {{ color: '#C65A72', highlight: '#C65A72' }},
-                    width: 4
-                }});
-            }});
-            edges.update(updateEdges);
+            // Ocultar todo lo que no pertenezca a la selección activa
+            nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: !activeNodes.has(n.id) }})));
+            edges.update(originalEdges.map(e => ({{ id: e.id, hidden: !activeEdges.has(e.id) }})));
 
-            var updateNodes = [];
-            activeNodes.forEach(function(nodeId) {{
-                var baseNode = originalNodes.find(n => n.id === nodeId);
-                if (baseNode) {{
-                    updateNodes.push({{
-                        id: nodeId,
-                        color: {{
-                            background: baseNode.color ? baseNode.color.background : undefined,
-                            border: '#C65A72'
-                        }},
-                        borderWidth: 3
-                    }});
-                }}
-            }});
-            nodes.update(updateNodes);
+            network.fit({{ nodes: Array.from(activeNodes), animation: {{ duration: 600 }} }});
         }}
 
+        // 4. INTERACCIÓN AL HACER CLIC EN UN NODO O ARISTA (TOGGLE DE SELECCIÓN)
+        network.on("click", function (params) {{
+            setTimeout(function() {{ network.unselectAll(); }}, 50);
+
+            if (params.nodes.length > 0) {{
+                var selectedNodeId = params.nodes[0];
+                var clickedNode = nodes.get(selectedNodeId);
+
+                if (clickedNode) {{
+                    var type = clickedNode.group;
+                    if (currentIsolatedValue === selectedNodeId && currentIsolatedType === type) {{
+                        clearHighlightState();
+                        return;
+                    }}
+                    if (type === 'bono') document.getElementById('sel-bono').value = selectedNodeId;
+                    else if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedNodeId;
+                    else if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedNodeId;
+
+                    applyIsolationFilter(selectedNodeId, type);
+                }}
+            }} else if (params.edges.length > 0) {{
+                var edgeId = params.edges[0];
+                var clickedEdge = edges.get(edgeId);
+
+                if (clickedEdge && clickedEdge.bono) {{
+                    var bonoId = clickedEdge.bono;
+                    if (currentIsolatedValue === bonoId && currentIsolatedType === 'bono') {{
+                        clearHighlightState();
+                        return;
+                    }}
+                    document.getElementById('sel-bono').value = bonoId;
+                    applyIsolationFilter(bonoId, 'bono');
+                }}
+            }} else {{
+                clearHighlightState();
+            }}
+        }});
+
+        function clearHighlightState() {{
+            currentIsolatedValue = null;
+            currentIsolatedType = null;
+
+            document.getElementById('sel-bono').value = "";
+            document.getElementById('sel-endosatario').value = "";
+            document.getElementById('sel-beneficiario').value = "";
+
+            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+            if (minCount > 0) {{
+                filterByEndosos(minCount);
+            }} else {{
+                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
+                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
+            }}
+        }}
+
+        // 5. RESTABLECER POSICIONES, FILTROS Y ENCUADRE
         function resetZoom() {{
             document.getElementById('sel-min-endosos').value = "0";
             clearHighlightState();
-            network.fit({{ animation: {{ duration: 800 }} }});
+
+            // Restaurar posiciones (x, y) guardadas tras la estabilización
+            var nodeUpdates = [];
+            for (var nodeId in initialPositions) {{
+                nodeUpdates.push({{
+                    id: nodeId,
+                    x: initialPositions[nodeId].x,
+                    y: initialPositions[nodeId].y,
+                    hidden: false
+                }});
+            }}
+            nodes.update(nodeUpdates);
+            edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
+
+            network.fit({{ animation: {{ duration: 600 }} }});
             network.unselectAll();
         }}
     </script>
