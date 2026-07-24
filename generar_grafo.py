@@ -21,6 +21,12 @@ def normalizar_texto(val):
     texto = re.sub(r'\.', '', texto)
     return " ".join(texto.split())
 
+def acortar_texto(texto, max_len=25):
+    """Acorta nombres muy largos para evitar saturación visual en el lienzo."""
+    if len(texto) > max_len:
+        return texto[:max_len] + "..."
+    return texto
+
 def main():
     print("➡️ Autenticando en GCP mediante Workload Identity Federation...")
     SCOPES = [
@@ -41,7 +47,7 @@ def main():
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    print("➡️ Procesando datos aplicando estética Salvia / Terracota / Crema...")
+    print("➡️ Procesando datos con paleta Salvia / Terracota / Crema...")
     
     bonos_set = set()
     endosatarios_set = set()
@@ -53,11 +59,11 @@ def main():
         width="100%", 
         directed=True, 
         notebook=False, 
-        bgcolor="#faf9f6", 
-        font_color="#2b2b2b"
+        bgcolor="#FAFAFA", 
+        font_color="#2B2B2B"
     )
     
-    # Física y curva para evitar superposición en idas y vueltas
+    # Configuración de física y curvas dinámicas
     net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=140)
 
     for _, row in df.iterrows():
@@ -71,32 +77,33 @@ def main():
         if beneficiario_id:
             beneficiarios_set.add(beneficiario_id)
 
-        # 1. NODO ORIGEN: Bono / N° Cepia (Salvia #A8BFA8 - Redondo)
+        # 1. NODO ORIGEN: Bono / N° Cepia (Salvia #A8BFA8 - Círculo grande)
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
             title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
             color={"background": "#A8BFA8", "border": "#7F9A7F"}, 
             shape="dot", 
-            size=28,
+            size=26,
             group="bono",
             font={"size": 13, "face": "arial", "bold": True, "color": "#1C2B1C"}
         )
 
-        # 2. NODO FINAL: Beneficiario (Arena/Crema #F0D9A7 - Cuadrado)
+        # 2. NODO FINAL: Beneficiario (Crema #F0D9A7 - Círculo compacto)
         if beneficiario_id:
+            label_benef = acortar_texto(beneficiario_id, 20)
             net.add_node(
                 beneficiario_id, 
-                label=f"Beneficiario:\n{beneficiario_id}", 
-                title=f"<b>Beneficiario:</b> {beneficiario_id}", 
+                label=f"Benef:\n{label_benef}", 
+                title=f"<b>Beneficiario Completo:</b><br>{beneficiario_id}", 
                 color={"background": "#F0D9A7", "border": "#D8B775"}, 
-                shape="box", 
-                size=22,
+                shape="dot", 
+                size=18,
                 group="beneficiario",
-                font={"size": 11, "face": "arial", "color": "#3D3015"}
+                font={"size": 10, "face": "arial", "color": "#3D3015"}
             )
 
-        # 3. ENDOSATARIOS INTERMEDIOS (Terracota Suave #D8A48F - Cuadrado)
+        # 3. ENDOSATARIOS INTERMEDIOS (Terracota Suave #D8A48F - Rectángulo suave)
         nodo_actual = cepia_id
         i = 1
         num_endosos = 0
@@ -115,20 +122,21 @@ def main():
                 num_endosos += 1
                 endosatarios_set.add(endosatario_id)
 
+                label_endo = acortar_texto(endosatario_id, 22)
                 net.add_node(
                     endosatario_id, 
-                    label=f"{endosatario_id}", 
-                    title=f"<b>Endosatario:</b> {endosatario_id}", 
+                    label=label_endo, 
+                    title=f"<b>Endosatario Completo:</b><br>{endosatario_id}", 
                     color={"background": "#D8A48F", "border": "#B87E67"}, 
                     shape="box",
-                    size=20,
+                    size=16,
                     group="endosatario",
-                    font={"size": 11, "face": "arial", "color": "#3B1E13"}
+                    font={"size": 10, "face": "arial", "color": "#3B1E13"}
                 )
                 
                 label_arista = f"Endoso {i}\n{fecha_val}" if fecha_val else f"Endoso {i}"
                 
-                # Arista con curva dinámica para distinguir idas y vueltas claramente
+                # Arista en gris base #B9B4AE con curva para direccionalidad
                 net.add_edge(
                     nodo_actual, 
                     endosatario_id, 
@@ -139,7 +147,7 @@ def main():
                     bono=cepia_id,
                     arrows={"to": {"enabled": True, "scaleFactor": 1.1}},
                     smooth={"type": "curvedCW", "roundness": 0.2},
-                    font={"size": 9, "align": "middle", "color": "#555555"}
+                    font={"size": 8, "align": "middle", "color": "#666666"}
                 )
                 
                 nodo_actual = endosatario_id
@@ -160,7 +168,7 @@ def main():
                 bono=cepia_id,
                 arrows={"to": {"enabled": True, "scaleFactor": 1.1}},
                 smooth={"type": "curvedCW", "roundness": 0.15},
-                font={"size": 9, "align": "middle", "color": "#555555"}
+                font={"size": 8, "align": "middle", "color": "#666666"}
             )
 
     os.makedirs("docs", exist_ok=True)
@@ -168,12 +176,20 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo adaptado a paleta Salvia/Terracota/Crema listo en: {output_path}")
+    print(f"✅ Grafo actualizado con estética Salvia/Terracota/Crema listo en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
     with open(html_path, 'r', encoding='utf-8') as f:
         content = f.read()
+
+    # Inyección de metatags anti-caché en el head
+    meta_cache = """
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    """
+    content = content.replace("<head>", f"<head>\n{meta_cache}")
 
     opts_bonos = "".join([f'<option value="{b}">{b}</option>' for b in sorted(bonos)])
     opts_endosatarios = "".join([f'<option value="{e}">{e}</option>' for e in sorted(endosatarios)])
@@ -186,11 +202,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             top: 10px;
             left: 10px;
             z-index: 1000;
-            background: rgba(250, 249, 246, 0.95);
+            background: rgba(250, 250, 250, 0.95);
             padding: 12px 16px;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            border: 1px solid #e0dad3;
+            border: 1px solid #E0DAD3;
             font-family: Arial, sans-serif;
             font-size: 13px;
             display: flex;
@@ -209,8 +225,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
         #filter-panel select, #filter-panel button {{
             padding: 6px 10px;
             border-radius: 4px;
-            border: 1px solid #ccc;
-            background-color: #fff;
+            border: 1px solid #CCC;
+            background-color: #FFF;
             font-size: 12px;
         }}
         #filter-panel button {{
@@ -260,7 +276,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
-        network.on("selectNode", function (params) {{
+        // --- MANEJO DE EVENTO CLIC (Mantiene Drag & Drop nativo al arrastrar) ---
+        network.on("click", function (params) {{
             if (params.nodes.length > 0) {{
                 var selectedNodeId = params.nodes[0];
                 var clickedNode = nodes.get(selectedNodeId);
@@ -275,11 +292,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                     document.getElementById('sel-beneficiario').value = selectedNodeId;
                     highlightPath(selectedNodeId, 'beneficiario');
                 }}
-            }}
-        }});
-
-        network.on("selectEdge", function (params) {{
-            if (params.nodes.length === 0 && params.edges.length > 0) {{
+            }} else if (params.edges.length > 0) {{
                 var edgeId = params.edges[0];
                 var clickedEdge = edges.get(edgeId);
 
@@ -287,17 +300,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                     document.getElementById('sel-bono').value = clickedEdge.bono;
                     highlightPath(clickedEdge.bono, 'bono');
                 }}
-            }}
-        }});
-
-        network.on("deselectNode", function (params) {{
-            if (params.nodes.length === 0 && params.edges.length === 0) {{
-                resetZoom();
-            }}
-        }});
-
-        network.on("deselectEdge", function (params) {{
-            if (params.nodes.length === 0 && params.edges.length === 0) {{
+            }} else {{
                 resetZoom();
             }}
         }});
@@ -337,7 +340,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                 }}
             }});
 
-            // Resaltar aristas en tono Rosa Destacado (#C65A72) con ancho 4px
+            // Resaltado de ruta en Rosa Destacado (#C65A72)
             var updateEdges = [];
             activeEdges.forEach(function(edgeId) {{
                 updateEdges.push({{
@@ -348,7 +351,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             }});
             edges.update(updateEdges);
 
-            // Destacar los nodos participantes bordeándolos en #C65A72
+            // Resaltado de bordes de nodos participantes
             var updateNodes = [];
             activeNodes.forEach(function(nodeId) {{
                 var baseNode = originalNodes.find(n => n.id === nodeId);
@@ -389,7 +392,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             }}
 
             network.fit({{ animation: {{ duration: 800 }} }});
-            network.unselectAll();
         }}
     </script>
     """
