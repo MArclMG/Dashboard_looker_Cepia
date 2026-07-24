@@ -15,7 +15,7 @@ def normalizar_texto(val):
         return ""
     texto = unicodedata.normalize('NFD', texto)
     texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn').upper()
-    texto = re.sub(r'\b(LIMITADA\.|LTAS|ltas|LIMITADA|LTDA\.|LTDA)\b', 'LTDA', texto)
+    texto = re.sub(r'\b(LIMITADA\.|LIMITADA|LTDA\.|LTDA)\b', 'LTDA', texto)
     texto = re.sub(r'\b(S\.A\.|S\.A)\b', 'SA', texto)
     texto = re.sub(r'\b(S\.P\.A\.|S\.P\.A|SPA\.)\b', 'SPA', texto)
     texto = re.sub(r'\.', '', texto)
@@ -41,7 +41,7 @@ def main():
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    print("➡️ Procesando datos y recolectando listas de filtros...")
+    print("➡️ Procesando datos y etiquetando rutas específicas por bono...")
     
     bonos_set = set()
     endosatarios_set = set()
@@ -123,12 +123,16 @@ def main():
                 )
                 
                 label_arista = f"Endoso {i}: {fecha_val}" if fecha_val else f"Endoso {i}"
+                
+                # Etiquetamos cada enlace con el atributo personal 'bono' para saber a qué traza pertenece exactamente
                 net.add_edge(
                     nodo_actual, 
                     endosatario_id, 
                     label=label_arista, 
-                    title=f"Fecha: {fecha_val}",
+                    title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
                     color="#ca6702",
+                    width=2,
+                    bono=cepia_id,
                     font={"size": 9, "align": "top"}
                 )
                 
@@ -142,9 +146,11 @@ def main():
                 nodo_actual, 
                 beneficiario_id, 
                 label="Asignado a", 
-                title="Registro de Beneficiario", 
+                title=f"Bono: {cepia_id} | Registro de Beneficiario", 
                 color="#94d2bd", 
-                dashes=True
+                width=2,
+                dashes=True,
+                bono=cepia_id
             )
 
     os.makedirs("docs", exist_ok=True)
@@ -152,7 +158,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo con tramado de ruta y atenuación generado en: {output_path}")
+    print(f"✅ Grafo con coloreado estricto por ruta de bono generado en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
@@ -235,17 +241,16 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
     </div>
 
     <script>
-        var allNodes = null;
-        var allEdges = null;
+        var originalNodes = [];
+        var originalEdges = [];
 
-        // Guardar estado original de los elementos una vez cargada la red
         network.once("afterDrawing", function () {{
-            allNodes = nodes.get({{returnType: "Object"}});
-            allEdges = edges.get({{returnType: "Object"}});
+            originalNodes = JSON.parse(JSON.stringify(nodes.get()));
+            originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
-        function highlightPath(selectedNodeId, type) {{
-            if (!selectedNodeId) {{
+        function highlightPath(selectedValue, type) {{
+            if (!selectedValue) {{
                 resetZoom();
                 return;
             }}
@@ -255,57 +260,67 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
 
-            var connectedNodes = new Set();
-            var connectedEdges = new Set();
+            // 1. Restaurar colores originales primero
+            nodes.update(originalNodes);
+            edges.update(originalEdges);
 
-            // Algoritmo de rastreo en ambas direcciones (origen <-> destino)
-            function traceConnected(nodeId) {{
-                connectedNodes.add(nodeId);
-                
-                // Obtener aristas conectadas al nodo
-                var nodeEdges = network.getConnectedEdges(nodeId);
-                nodeEdges.forEach(function(edgeId) {{
-                    var edge = edges.get(edgeId);
-                    connectedEdges.add(edgeId);
-                    
-                    if (edge.from === nodeId && !connectedNodes.has(edge.to)) {{
-                        traceConnected(edge.to);
-                    }}
-                    if (edge.to === nodeId && !connectedNodes.has(edge.from)) {{
-                        traceConnected(edge.from);
+            var activeBonos = new Set();
+            var activeNodes = new Set();
+            var activeEdges = new Set();
+
+            // Identificar los bonos válidos según la selección
+            if (type === 'bono') {{
+                activeBonos.add(selectedValue);
+            }} else {{
+                // Si es Endosatario o Beneficiario, buscar qué bonos pasan REALMENTE por este nodo
+                originalEdges.forEach(function(edge) {{
+                    if (edge.from === selectedValue || edge.to === selectedValue) {{
+                        if (edge.bono) activeBonos.add(edge.bono);
                     }}
                 }});
             }}
 
-            traceConnected(selectedNodeId);
-
-            // Modificar opacidad de todos los nodos
-            var updateNodes = [];
-            for (var nodeId in allNodes) {{
-                if (connectedNodes.has(nodeId)) {{
-                    updateNodes.push({{ id: nodeId, opacity: 1.0, font: {{ color: '#000000' }} }});
-                }} else {{
-                    updateNodes.push({{ id: nodeId, opacity: 0.1, font: {{ color: 'rgba(0,0,0,0.1)' }} }});
+            // 2. Filtrar únicamente las aristas que pertenecen a los bonos identificados
+            originalEdges.forEach(function(edge) {{
+                if (activeBonos.has(edge.bono)) {{
+                    activeEdges.add(edge.id);
+                    activeNodes.add(edge.from);
+                    activeNodes.add(edge.to);
                 }}
-            }}
-            nodes.update(updateNodes);
+            }});
 
-            // Modificar opacidad de todas las aristas/líneas
+            // 3. Pintar en ROJO / VIVO solo la ruta real activa
             var updateEdges = [];
-            for (var edgeId in allEdges) {{
-                if (connectedEdges.has(edgeId)) {{
-                    updateEdges.push({{ id: edgeId, opacity: 1.0 }});
-                }} else {{
-                    updateEdges.push({{ id: edgeId, opacity: 0.05 }});
-                }}
-            }}
+            activeEdges.forEach(function(edgeId) {{
+                updateEdges.push({{
+                    id: edgeId,
+                    color: {{ color: '#d90429', highlight: '#d90429' }}, // Rojo vibrante para la ruta activa
+                    width: 5
+                }});
+            }});
             edges.update(updateEdges);
 
-            // Enfocar la cámara en el grupo de nodos seleccionados
-            network.fit({{
-                nodes: Array.from(connectedNodes),
-                animation: {{ duration: 1000, easingFunction: "easeInOutQuad" }}
+            var updateNodes = [];
+            activeNodes.forEach(function(nodeId) {{
+                updateNodes.push({{
+                    id: nodeId,
+                    color: {{ background: '#ffb703', border: '#d90429' }} // Destacar los nodos participantes
+                }});
             }});
+            nodes.update(updateNodes);
+
+            // 4. Centrar suavemente en la entidad seleccionada sin deformar la vista global
+            if (type === 'bono' && activeNodes.size > 0) {{
+                network.fit({{
+                    nodes: Array.from(activeNodes),
+                    animation: {{ duration: 800, easingFunction: "easeInOutQuad" }}
+                }});
+            }} else {{
+                network.focus(selectedValue, {{
+                    scale: 1.1,
+                    animation: {{ duration: 800, easingFunction: "easeInOutQuad" }}
+                }});
+            }}
         }}
 
         function resetZoom() {{
@@ -313,21 +328,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             document.getElementById('sel-endosatario').value = "";
             document.getElementById('sel-beneficiario').value = "";
 
-            if (allNodes && allEdges) {{
-                var updateNodes = [];
-                for (var nodeId in allNodes) {{
-                    updateNodes.push({{ id: nodeId, opacity: 1.0, font: {{ color: '#333333' }} }});
-                }}
-                nodes.update(updateNodes);
-
-                var updateEdges = [];
-                for (var edgeId in allEdges) {{
-                    updateEdges.push({{ id: edgeId, opacity: 1.0 }});
-                }}
-                edges.update(updateEdges);
+            if (originalNodes.length > 0 && originalEdges.length > 0) {{
+                nodes.update(originalNodes);
+                edges.update(originalEdges);
             }}
 
-            network.fit({{ animation: {{ duration: 1000 }} }});
+            network.fit({{ animation: {{ duration: 800 }} }});
             network.unselectAll();
         }}
     </script>
