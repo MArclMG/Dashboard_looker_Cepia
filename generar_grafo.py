@@ -249,7 +249,6 @@ def main():
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
     print(f"✅ Grafo procesado con escalado sutil de nodos y filtros vinculados en: {output_path}")
 
-
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
     with open(html_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -315,7 +314,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             background-color: #A8455B;
         }}
 
-        /* ESTILIZADO DE TARJETAS TAG PARA TOOLTIPS (HOVER) */
+        /* ESTILIZADO DE TARJETAS TAG PARA TOOLTIPS (HOVER) CON AUTO-AJUSTE */
         div.vis-tooltip {{
             position: absolute !important;
             background-color: transparent !important;
@@ -335,7 +334,14 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             color: #2B2B2B;
             font-size: 12px;
             line-height: 1.4;
-            max-width: 300px;
+            
+            /* PROPIEDADES DE ANCHO Y SALTO DE LÍNEA DINÁMICO */
+            width: max-content;          /* Se ajusta al tamaño exacto del texto si es corto */
+            min-width: 180px;            /* Tamaño mínimo estético */
+            max-width: 320px;            /* Ancho máximo en pantalla */
+            white-space: normal;         /* Permite saltos de línea automáticos */
+            overflow-wrap: break-word;   /* Parte las palabras largas si superan el max-width */
+            word-break: break-word;      /* Asegura el quiebre de texto en cualquier navegador */
         }}
         .custom-tooltip-card strong {{
             color: #1A1A1A;
@@ -451,7 +457,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         function filterByEndosos(minCount) {{
             minCount = parseInt(minCount, 10);
             
-            // Limpiar aislamientos para aplicar el nuevo filtro base
             currentIsolatedValue = null;
             currentIsolatedType = null;
 
@@ -472,7 +477,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             edges.update(originalEdges.map(e => ({{ id: e.id, hidden: e.cantEndosos < minCount }})));
             nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: !validNodeIds.has(n.id) }})));
 
-            // Actualizar opciones de los desplegables en cascada
             updateSelectDropdowns(validNodeIds);
         }}
 
@@ -515,7 +519,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }}
             }});
 
-            // Respetar también el filtro de endosos si está activo
             var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
 
             nodes.update(originalNodes.map(n => ({{
@@ -600,10 +603,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
-
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(new_content)
-
 
 if __name__ == "__main__":
     main()
