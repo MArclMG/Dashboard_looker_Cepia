@@ -62,7 +62,7 @@ def main():
         font_color="#2B2B2B"
     )
     
-    # FÍSICA EXPANSIVA
+    # CONFIGURACIÓN DE FÍSICA ESTABILIZADA Y CONGELADA
     net.set_options("""
     {
       "interaction": {
@@ -70,20 +70,29 @@ def main():
         "dragNodes": true,
         "dragView": true,
         "selectable": true,
-        "multiselect": false
+        "multiselect": false,
+        "zoomView": true
       },
       "physics": {
+        "enabled": true,
         "barnesHut": {
-          "gravitationalConstant": -12000,
-          "centralGravity": 0.15,
-          "springLength": 260,
-          "springConstant": 0.02,
-          "damping": 0.09,
+          "gravitationalConstant": -8000,
+          "centralGravity": 0.05,
+          "springLength": 220,
+          "springConstant": 0.04,
+          "damping": 0.2,
           "avoidOverlap": 1
         },
         "maxVelocity": 50,
-        "minVelocity": 0.75,
-        "solver": "barnesHut"
+        "minVelocity": 0.5,
+        "solver": "barnesHut",
+        "stabilization": {
+          "enabled": true,
+          "iterations": 1000,
+          "updateInterval": 25,
+          "onlyDynamicEdges": false,
+          "fit": true
+        }
       },
       "groups": {
         "bono": {
@@ -109,7 +118,6 @@ def main():
         if not cepia_id: 
             continue
 
-        # 1. CONTAR ENDOSOS REALES DEL BONO
         i_temp = 1
         num_endosos_bono = 0
         while True:
@@ -128,7 +136,6 @@ def main():
         if beneficiario_id:
             beneficiarios_set.add(beneficiario_id)
 
-        # NODO ORIGEN: Bono (Salvia #A8BFA8)
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
@@ -139,7 +146,6 @@ def main():
             font={"size": 11, "face": "arial", "bold": True, "color": "#1C2B1C"}
         )
 
-        # NODO FINAL: Beneficiario (Crema #F0D9A7)
         if beneficiario_id:
             label_benef = acortar_texto(beneficiario_id, 12)
             net.add_node(
@@ -151,7 +157,6 @@ def main():
                 font={"size": 9, "face": "arial", "color": "#3D3015"}
             )
 
-        # ENDOSATARIOS INTERMEDIOS (Terracota #D8A48F)
         nodo_actual = cepia_id
         i = 1
         
@@ -219,7 +224,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
-    print(f"✅ Grafo con filtro dinámico por cantidad de endosos generado en: {output_path}")
+    print(f"✅ Grafo con vista fidedigna y física congelada en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
@@ -237,7 +242,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     opts_endosatarios = "".join([f'<option value="{e}">{e}</option>' for e in sorted(endosatarios)])
     opts_beneficiarios = "".join([f'<option value="{b}">{b}</option>' for b in sorted(beneficiarios)])
 
-    # Generar opciones dinámicas para Mínimo de Endosos (0, >=1, >=2, ..., >=N)
     opts_num_endosos = '<option value="0">Todos (≥ 0)</option>'
     for k in range(1, max_endosos + 1):
         opts_num_endosos += f'<option value="{k}">Al menos {k} endoso{"s" if k > 1 else ""}</option>'
@@ -324,24 +328,26 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var originalNodes = [];
         var originalEdges = [];
 
+        // CONGELAR FÍSICA UNA VEZ ESTABILIZADO EL MAPA
+        network.once("stabilizationIterationsDone", function() {{
+            network.setOptions({{ physics: {{ enabled: false }} }});
+        }});
+
         network.once("afterDrawing", function () {{
             originalNodes = JSON.parse(JSON.stringify(nodes.get()));
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
-        // FILTRADO POR CANTIDAD DE ENDOSOS
         function filterByEndosos(minCount) {{
             minCount = parseInt(minCount, 10);
 
-            // Restablecer selectores de entidades
             document.getElementById('sel-bono').value = "";
             document.getElementById('sel-endosatario').value = "";
             document.getElementById('sel-beneficiario').value = "";
 
             if (minCount === 0) {{
-                nodes.update(originalNodes);
-                edges.update(originalEdges);
-                network.fit({{ animation: {{ duration: 800 }} }});
+                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
+                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
                 return;
             }}
 
@@ -355,7 +361,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 validNodeIds.add(edge.to);
             }});
 
-            // Ocultar/Mostrar aristas
             var edgeUpdates = originalEdges.map(function(edge) {{
                 return {{
                     id: edge.id,
@@ -364,7 +369,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }});
             edges.update(edgeUpdates);
 
-            // Ocultar/Mostrar nodos
             var nodeUpdates = originalNodes.map(function(node) {{
                 return {{
                     id: node.id,
@@ -372,8 +376,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }};
             }});
             nodes.update(nodeUpdates);
-
-            network.fit({{ animation: {{ duration: 800 }} }});
         }}
 
         network.on("click", function (params) {{
@@ -401,14 +403,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     document.getElementById('sel-bono').value = clickedEdge.bono;
                     highlightPath(clickedEdge.bono, 'bono');
                 }}
-            }} else {{
-                resetZoom();
             }}
         }});
 
         function highlightPath(selectedValue, type) {{
             if (!selectedValue) {{
-                resetZoom();
                 return;
             }}
 
@@ -416,7 +415,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
 
-            // Restaurar estado según filtro de endosos activo
             var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
             if (minCount > 0) {{
                 filterByEndosos(minCount);
@@ -472,18 +470,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }}
             }});
             nodes.update(updateNodes);
-
-            if (type === 'bono' && activeNodes.size > 0) {{
-                network.fit({{
-                    nodes: Array.from(activeNodes),
-                    animation: {{ duration: 800, easingFunction: "easeInOutQuad" }}
-                }});
-            }} else {{
-                network.focus(selectedValue, {{
-                    scale: 1.1,
-                    animation: {{ duration: 800, easingFunction: "easeInOutQuad" }}
-                }});
-            }}
         }}
 
         function resetZoom() {{
