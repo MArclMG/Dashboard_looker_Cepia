@@ -29,11 +29,11 @@ def acortar_texto(texto, max_len=14):
 def main():
     print("➡️ Autenticando en GCP mediante Workload Identity Federation...")
     SCOPES = [
-        "https://www.googleapis.com/auth/spreadsheets.readonly", 
-        "https://www.googleapis.com/auth/drive.readonly"
+        "https://www.googleapis.com/auth/spreadsheets", 
+        "https://www.googleapis.com/auth/drive"
     ]
     
-    credentials, _ = google.auth.default(scopes=SCOPES)
+    credentials, project = google.auth.default(scopes=SCOPES)
     if not credentials.valid: 
         credentials.refresh(Request())
         
@@ -85,7 +85,7 @@ def main():
         width="100%", 
         directed=True, 
         notebook=False, 
-        bgcolor="transparent", 
+        bgcolor="#FAFAFA", 
         font_color="#2B2B2B"
     )
     
@@ -162,7 +162,7 @@ def main():
                 group="beneficiario",
                 shape="dot",
                 size=14,
-                font={"size": 10, "face": "Arial"}
+                font={"size": 9, "face": "Arial"}
             )
 
         nodo_actual = cepia_id
@@ -193,7 +193,7 @@ def main():
                     shape="box",
                     size=size_dinamico,
                     widthConstraint={"maximum": 120},
-                    font={"size": 10, "face": "Arial"}
+                    font={"size": 9, "face": "Arial"}
                 )
                 
                 label_arista = f"E{i}: {fecha_val}" if fecha_val else f"Endoso {i}"
@@ -208,7 +208,7 @@ def main():
                     cantEndosos=num_endosos_bono,
                     arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
                     smooth={"type": "curvedCW", "roundness": 0.25},
-                    font={"size": 7, "face": "Arial", "align": "middle", "vadjust": -2}
+                    font={"size": 8, "align": "middle", "color": "#777777"}
                 )
                 nodo_actual = endosatario_id
             i += 1
@@ -225,7 +225,7 @@ def main():
                 cantEndosos=num_endosos_bono,
                 arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
                 smooth={"type": "curvedCW", "roundness": 0.2},
-                font={"size": 7, "face": "Arial", "align": "middle", "vadjust": -2}
+                font={"size": 8, "align": "middle", "color": "#777777"}
             )
 
     os.makedirs("docs", exist_ok=True)
@@ -233,7 +233,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
-    print(f"✅ Grafo procesado con selector de 4 temas y búsqueda rápida en: {output_path}")
+    print(f"✅ Grafo actualizado exitosamente en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
@@ -245,671 +245,519 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     """
-    content = content.replace("<head>", f"<head>\n{meta_cache}", 1)
+    content = content.replace("<head>", f"<head>\n{meta_cache}")
 
-    panel_html = r"""
+    opts_bonos = "".join([f'<option value="{b}">{b}</option>' for b in sorted(bonos)])
+    opts_endosatarios = "".join([f'<option value="{e}">{e}</option>' for e in sorted(endosatarios)])
+    opts_beneficiarios = "".join([f'<option value="{b}">{b}</option>' for b in sorted(beneficiarios)])
+
+    opts_num_endosos = '<option value="0">Todos (≥ 0)</option>'
+    for k in range(1, max_endosos + 1):
+        opts_num_endosos += f'<option value="{k}">Al menos {k} endoso{"s" if k > 1 else ""}</option>'
+
+    panel_html = f"""
     <style>
-        :root {
-            --graph-bg: #FAFAFA;
-            --panel-bg: rgba(250,250,250,0.97);
-            --panel-border: #E0DAD3;
-            --panel-text: #333333;
-            --ctrl-bg: #FFFFFF;
-            --ctrl-text: #333333;
-            --ctrl-border: #CCCCCC;
-            --btn-bg: #C65A72;
-            --btn-hover: #A8455B;
-            --tooltip-bg: #FFFFFF;
-            --tooltip-text: #252525;
-            --tooltip-border: #C9CDD2;
-        }
-
-        html, body {
-            margin: 0 !important;
-            padding: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            overflow: hidden !important;
-            background: var(--graph-bg) !important;
+        body, html {{
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
             font-family: Arial, sans-serif;
-            transition: background-color 0.25s ease;
-        }
-
-        .card, .card-body {
-            margin: 0 !important;
-            padding: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            border: 0 !important;
-            background: transparent !important;
-        }
-
-        #mynetwork {
-            width: 100% !important;
-            height: 100vh !important;
-            border: 0 !important;
-            background: var(--graph-bg) !important;
-            transition: background-color 0.25s ease;
-        }
-
-        #mynetwork canvas {
-            background: transparent !important;
-        }
-
-        #filter-panel {
+        }}
+        #mynetwork {{
+            width: 100%;
+            height: 100vh;
+        }}
+        #filter-panel {{
             position: absolute;
             top: 10px;
             left: 10px;
             z-index: 1000;
+            padding: 12px 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+            font-size: 13px;
             display: flex;
-            gap: 12px;
+            gap: 10px;
             align-items: center;
             flex-wrap: wrap;
-            max-width: calc(100% - 40px);
-            padding: 12px 16px;
-            color: var(--panel-text);
-            background: var(--panel-bg);
-            border: 1px solid var(--panel-border);
-            border-radius: 8px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.22);
-            font-size: 13px;
-        }
-
-        #filter-panel label {
+            max-width: 95%;
+            transition: all 0.3s ease;
+        }}
+        #filter-panel label {{
+            font-weight: bold;
             display: flex;
             flex-direction: column;
             gap: 4px;
-            color: var(--panel-text);
-            font-weight: bold;
-        }
-
-        #filter-panel select,
-        #filter-panel button {
-            min-height: 30px;
+        }}
+        #filter-panel select, #filter-panel button {{
             padding: 6px 10px;
             border-radius: 4px;
             font-size: 12px;
             outline: none;
-        }
-
-        #filter-panel select {
-            color: var(--ctrl-text);
-            background: var(--ctrl-bg);
-            border: 1px solid var(--ctrl-border);
-        }
-
-        #filter-panel option {
-            color: var(--ctrl-text);
-            background: var(--ctrl-bg);
-        }
-
-        #filter-panel button {
-            margin-top: 16px;
-            color: #FFFFFF;
-            background: var(--btn-bg);
-            border: 0;
+            transition: all 0.2s ease;
+        }}
+        #filter-panel button {{
+            color: white;
+            border: none;
             cursor: pointer;
             font-weight: bold;
-        }
+            margin-top: 16px;
+        }}
 
-        #filter-panel button:hover {
-            background: var(--btn-hover);
-        }
-
-        /* Tooltip opaco para nodos y aristas. */
-        div.vis-tooltip {
+        /* HOVER TEXT COMPLETAMENTE SÓLIDO Y OPACO */
+        div.vis-tooltip {{
             position: absolute !important;
-            z-index: 9999 !important;
-            pointer-events: none !important;
-            max-width: 340px !important;
-            padding: 9px 12px !important;
-            color: var(--tooltip-text) !important;
-            background: var(--tooltip-bg) !important;
-            border: 1px solid var(--tooltip-border) !important;
-            border-radius: 7px !important;
-            box-shadow: 0 5px 18px rgba(0,0,0,0.34) !important;
-            font-family: Arial, sans-serif !important;
-            font-size: 12px !important;
-            line-height: 1.45 !important;
-            white-space: normal !important;
-            overflow-wrap: break-word !important;
-            word-break: break-word !important;
-        }
+            background-color: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+            z-index: 99999 !important;
+            pointer-events: none;
+        }}
+        .custom-tooltip-card {{
+            border-radius: 6px;
+            padding: 10px 14px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+            font-size: 12px;
+            line-height: 1.4;
+            width: max-content;
+            min-width: 190px;
+            max-width: 330px;
+            white-space: normal;
+            overflow-wrap: break-word;
+            word-break: break-word;
+            opacity: 1.0 !important; /* Opacidad 100% solida */
+        }}
     </style>
 
     <div id="filter-panel">
         <label>Tema:
             <select id="sel-theme" onchange="changeTheme(this.value)">
-                <option value="dia1">Día · Pastel original</option>
-                <option value="dia2">Día · Azul Acero / Teal / Mostaza</option>
+                <option value="dia1">Día · Salvia / Terracota / Crema (Pastel)</option>
+                <option value="dia2">Día · Azul Acero / Teal Vivo / Mostaza</option>
                 <option value="noche1">Noche · Petróleo / Pino / Ámbar</option>
-                <option value="noche2">Noche · Índigo / Turquesa / Cobre</option>
+                <option value="noche2">Noche · Grafito / Índigo / Cobre Vivo</option>
             </select>
         </label>
 
         <label>Min. Endosos:
-            <select id="sel-min-endosos" onchange="filterByEndosos(this.value)"></select>
+            <select id="sel-min-endosos" onchange="filterByEndosos(this.value)">
+                {opts_num_endosos}
+            </select>
         </label>
 
         <label>Bono (N° Cepia):
             <select id="sel-bono" class="searchable-select" onchange="applyIsolationFilter(this.value, 'bono')">
                 <option value="">-- Todos --</option>
+                {opts_bonos}
             </select>
         </label>
 
         <label>Endosatario:
             <select id="sel-endosatario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'endosatario')">
                 <option value="">-- Todos --</option>
+                {opts_endosatarios}
             </select>
         </label>
 
         <label>Beneficiario:
             <select id="sel-beneficiario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'beneficiario')">
                 <option value="">-- Todos --</option>
+                {opts_beneficiarios}
             </select>
         </label>
 
-        <button id="btn-edge-labels" type="button" onclick="toggleEdgeLabels()">
-            Ocultar texto aristas
-        </button>
-
-        <button id="btn-reset" type="button" onclick="resetZoom()">
-            Restablecer vista
-        </button>
+        <button id="btn-toggle-labels" style="background-color: #555555;" onclick="toggleEdgeLabels()">Ocultar Fechas</button>
+        <button id="btn-reset" onclick="resetZoom()">Restablecer Vista</button>
     </div>
 
     <script>
-        "use strict";
-
-        var MAX_ENDOSOS = __MAX_ENDOSOS__;
-
-        var THEMES = {
-            dia1: {
-                dark: false,
-                bgGrafo: "#FAFAFA",
-                panelBg: "rgba(250,250,250,0.97)",
-                panelBorder: "#E0DAD3",
-                textCtrl: "#333333",
-                ctrlBg: "#FFFFFF",
-                ctrlBorder: "#CCCCCC",
-                tooltipBg: "#FFFFFF",
-                tooltipText: "#252525",
-                tooltipBorder: "#C9CDD2",
+        // CONFIGURACIÓN DE PALETAS RESTAURADAS
+        var THEMES = {{
+            dia1: {{
+                bgGrafo: "#FAFAFA", panelBg: "#FAFAFA", panelBorder: "#E0DAD3",
+                textGen: "#2B2B2B", textCtrl: "#333333", ctrlBg: "#FFFFFF", ctrlBorder: "#CCCCCC",
                 btnBg: "#C65A72",
-                btnHover: "#A8455B",
-                bono: { bg: "#A8BFA8", border: "#7F9A7F", text: "#1C2B1C" },
-                endosatario: { bg: "#D8A48F", border: "#B87E67", text: "#3B1E13" },
-                beneficiario: { bg: "#F0D9A7", border: "#D8B775", text: "#3D3015" },
-                edgeNormal: "#B9B4AE",
-                edgeText: "#666666",
-                edgeHighlight: "#C65A72"
-            },
-            dia2: {
-                dark: false,
-                bgGrafo: "#F4F7FB",
-                panelBg: "rgba(255,255,255,0.97)",
-                panelBorder: "#D8E0EA",
-                textCtrl: "#243342",
-                ctrlBg: "#FFFFFF",
-                ctrlBorder: "#D8E0EA",
-                tooltipBg: "#FFFFFF",
-                tooltipText: "#243342",
-                tooltipBorder: "#B9C5D2",
+                tooltipBg: "#FFFFFF", tooltipText: "#2B2B2B", tooltipBorder: "#E0DAD3",
+                bono: {{ bg: "#A8BFA8", border: "#7F9A7F", text: "#1C2B1C" }},
+                empresa: {{ bg: "#D8A48F", border: "#B87E67", text: "#3B1E13" }},
+                beneficiario: {{ bg: "#F0D9A7", border: "#D8B775", text: "#3D3015" }},
+                edgeNormal: "#B9B4AE", edgeText: "#777777", edgeHighlight: "#C65A72"
+            }},
+            dia2: {{
+                bgGrafo: "#F4F7FB", panelBg: "#FFFFFF", panelBorder: "#D8E0EA",
+                textGen: "#243342", textCtrl: "#243342", ctrlBg: "#FFFFFF", ctrlBorder: "#D8E0EA",
                 btnBg: "#D94F70",
-                btnHover: "#B83A58",
-                bono: { bg: "#8FB3D9", border: "#4F7DA8", text: "#18324A" },
-                endosatario: { bg: "#74C3B4", border: "#2E8F80", text: "#113B36" },
-                beneficiario: { bg: "#E6C15A", border: "#B48A18", text: "#4A3710" },
-                edgeNormal: "#9EA7B3",
-                edgeText: "#58606B",
-                edgeHighlight: "#D94F70"
-            },
-            noche1: {
-                dark: true,
-                bgGrafo: "#0D1521",
-                panelBg: "rgba(24,34,48,0.98)",
-                panelBorder: "#3A485A",
-                textCtrl: "#E7ECF2",
-                ctrlBg: "#121D2B",
-                ctrlBorder: "#445368",
-                tooltipBg: "#202B39",
-                tooltipText: "#F2F5F8",
-                tooltipBorder: "#53657A",
-                btnBg: "#E35F78",
-                btnHover: "#F0798E",
-                bono: { bg: "#456C89", border: "#8BB4D0", text: "#F5FAFF" },
-                endosatario: { bg: "#3E847A", border: "#84C7BC", text: "#F4FFFD" },
-                beneficiario: { bg: "#9B752D", border: "#E2BC62", text: "#FFF8E5" },
-                edgeNormal: "#6F7E91",
-                edgeText: "#CBD5E1",
-                edgeHighlight: "#FF7188"
-            },
-            noche2: {
-                dark: true,
-                bgGrafo: "#0B0D10",
-                panelBg: "rgba(28,30,35,0.98)",
-                panelBorder: "#454A53",
-                textCtrl: "#F2F3F5",
-                ctrlBg: "#181A1F",
-                ctrlBorder: "#484E58",
-                tooltipBg: "#252830",
-                tooltipText: "#F7F7F8",
-                tooltipBorder: "#5B626E",
-                btnBg: "#FF675F",
-                btnHover: "#FF827B",
-                bono: { bg: "#6675DF", border: "#B3BCFF", text: "#F8F8FF" },
-                endosatario: { bg: "#259D91", border: "#76DBCF", text: "#F1FFFD" },
-                beneficiario: { bg: "#C77A32", border: "#F3B86F", text: "#FFF7ED" },
-                edgeNormal: "#747C89",
-                edgeText: "#D5DBE3",
-                edgeHighlight: "#FF716A"
-            }
-        };
+                tooltipBg: "#FFFFFF", tooltipText: "#243342", tooltipBorder: "#D8E0EA",
+                bono: {{ bg: "#8FB3D9", border: "#4F7DA8", text: "#18324A" }},
+                empresa: {{ bg: "#74C3B4", border: "#2E8F80", text: "#113B36" }},
+                beneficiario: {{ bg: "#E6C15A", border: "#B48A18", text: "#4A3710" }},
+                edgeNormal: "#9EA7B3", edgeText: "#58606B", edgeHighlight: "#D94F70"
+            }},
+            noche1: {{
+                bgGrafo: "#111827", panelBg: "#1F2937", panelBorder: "#374151",
+                textGen: "#E5E7EB", textCtrl: "#E5E7EB", ctrlBg: "#111827", ctrlBorder: "#374151",
+                btnBg: "#FF6B81",
+                tooltipBg: "#1F2937", tooltipText: "#F3F4F6", tooltipBorder: "#4B5563",
+                bono: {{ bg: "#3C5A73", border: "#7FA3BF", text: "#F5FAFF" }},
+                empresa: {{ bg: "#3D746D", border: "#79B7AE", text: "#F4FFFD" }},
+                beneficiario: {{ bg: "#8A6A2F", border: "#D6B15E", text: "#FFF8E5" }},
+                edgeNormal: "#64748B", edgeText: "#CBD5E1", edgeHighlight: "#FF6B81"
+            }},
+            noche2: {{
+                bgGrafo: "#15171B", panelBg: "#22262C", panelBorder: "#3A4048",
+                textGen: "#F3F4F6", textCtrl: "#F3F4F6", ctrlBg: "#1A1D22", ctrlBorder: "#3A4048",
+                btnBg: "#FF6E67",
+                tooltipBg: "#22262C", tooltipText: "#F3F4F6", tooltipBorder: "#4B5563",
+                bono: {{ bg: "#6E7EE6", border: "#AAB4FF", text: "#F5F7FF" }},
+                empresa: {{ bg: "#2FA394", border: "#72D6C7", text: "#F1FFFC" }},
+                beneficiario: {{ bg: "#C9853E", border: "#F1BA72", text: "#FFF6E8" }},
+                edgeNormal: "#6E7682", edgeText: "#D5DBE3", edgeHighlight: "#FF6E67"
+            }}
+        }};
 
-        /* Captura inmediata: el panel se inyecta después de crear nodes/edges. */
-        var originalNodes = JSON.parse(JSON.stringify(nodes.get()));
-        var originalEdges = JSON.parse(JSON.stringify(edges.get()));
-        var initialPositions = {};
-        var positionsCaptured = false;
+        var currentThemeKey = localStorage.getItem('selectedTheme') || 'dia1';
+        var originalNodes = [];
+        var originalEdges = [];
+        var initialPositions = {{}};
         var currentIsolatedValue = null;
         var currentIsolatedType = null;
-        var currentThemeKey = localStorage.getItem("selectedTheme") || "dia1";
-        var edgeLabelsVisible = localStorage.getItem("edgeLabelsVisible") !== "false";
+        var showEdgeLabels = true;
 
-        if (!THEMES[currentThemeKey]) currentThemeKey = "dia1";
-
-        function cssVar(name, value) {
-            document.documentElement.style.setProperty(name, value);
-        }
-
-        function groupTheme(theme, group) {
-            return theme[group] || theme.bono;
-        }
-
-        function clearEntitySelections() {
-            document.getElementById("sel-bono").value = "";
-            document.getElementById("sel-endosatario").value = "";
-            document.getElementById("sel-beneficiario").value = "";
-        }
-
-        function replaceOptions(select, values) {
-            select.replaceChildren(new Option("-- Todos --", ""));
-            values.forEach(function(value) {
-                select.add(new Option(value, value));
-            });
-        }
-
-        function sortValues(values) {
-            return values.sort(function(a, b) {
-                return a.localeCompare(b, "es", { sensitivity: "base", numeric: true });
-            });
-        }
-
-        function updateSelectDropdowns(validNodeIds) {
-            var bonos = [];
-            var endosatarios = [];
-            var beneficiarios = [];
-
-            originalNodes.forEach(function(node) {
-                if (validNodeIds && !validNodeIds.has(node.id)) return;
-                if (node.group === "bono") bonos.push(String(node.id));
-                if (node.group === "endosatario") endosatarios.push(String(node.id));
-                if (node.group === "beneficiario") beneficiarios.push(String(node.id));
-            });
-
-            replaceOptions(document.getElementById("sel-bono"), sortValues(bonos));
-            replaceOptions(document.getElementById("sel-endosatario"), sortValues(endosatarios));
-            replaceOptions(document.getElementById("sel-beneficiario"), sortValues(beneficiarios));
-        }
-
-        function buildMinOptions() {
-            var select = document.getElementById("sel-min-endosos");
-            select.replaceChildren(new Option("Todos (≥ 0)", "0"));
-            for (var i = 1; i <= MAX_ENDOSOS; i++) {
-                select.add(new Option("Al menos " + i + " endoso" + (i === 1 ? "" : "s"), String(i)));
-            }
-        }
-
-        function applyThemeStyles(themeKey) {
+        // APLICAR TEMA Y COLORIMETRÍA PANTALLA COMPLETA
+        function applyThemeStyles(themeKey) {{
             var t = THEMES[themeKey] || THEMES.dia1;
             currentThemeKey = themeKey;
-            localStorage.setItem("selectedTheme", themeKey);
+            localStorage.setItem('selectedTheme', themeKey);
 
-            cssVar("--graph-bg", t.bgGrafo);
-            cssVar("--panel-bg", t.panelBg);
-            cssVar("--panel-border", t.panelBorder);
-            cssVar("--panel-text", t.textCtrl);
-            cssVar("--ctrl-bg", t.ctrlBg);
-            cssVar("--ctrl-text", t.textCtrl);
-            cssVar("--ctrl-border", t.ctrlBorder);
-            cssVar("--btn-bg", t.btnBg);
-            cssVar("--btn-hover", t.btnHover);
-            cssVar("--tooltip-bg", t.tooltipBg);
-            cssVar("--tooltip-text", t.tooltipText);
-            cssVar("--tooltip-border", t.tooltipBorder);
-
-            document.documentElement.style.backgroundColor = t.bgGrafo;
+            // Fondo de pantalla completo
             document.body.style.backgroundColor = t.bgGrafo;
-            var container = document.getElementById("mynetwork");
-            if (container) container.style.backgroundColor = t.bgGrafo;
+            var netContainer = document.getElementById('mynetwork');
+            if (netContainer) netContainer.style.backgroundColor = t.bgGrafo;
 
-            network.setOptions({
-                edges: {
-                    font: {
-                        size: 7,
-                        face: "Arial",
-                        color: t.edgeText,
-                        strokeWidth: t.dark ? 1.5 : 1,
-                        strokeColor: t.bgGrafo,
-                        align: "middle",
-                        vadjust: -2
-                    }
-                }
-            });
+            var panel = document.getElementById('filter-panel');
+            panel.style.backgroundColor = t.panelBg;
+            panel.style.borderColor = t.panelBorder;
+            panel.style.color = t.textCtrl;
 
-            nodes.update(originalNodes.map(function(node) {
-                var gt = groupTheme(t, node.group);
-                return {
-                    id: node.id,
-                    borderWidth: 1.5,
-                    color: {
-                        background: gt.bg,
-                        border: gt.border,
-                        highlight: { background: gt.bg, border: t.edgeHighlight },
-                        hover: { background: gt.bg, border: t.edgeHighlight }
-                    },
-                    font: Object.assign({}, node.font || {}, { color: gt.text, face: "Arial" })
-                };
-            }));
+            var selects = panel.querySelectorAll('select');
+            selects.forEach(function(s) {{
+                s.style.backgroundColor = t.ctrlBg;
+                s.style.color = t.textCtrl;
+                s.style.borderColor = t.ctrlBorder;
+            }});
 
-            edges.update(originalEdges.map(function(edge) {
-                return {
-                    id: edge.id,
-                    width: 1.5,
-                    color: { color: t.edgeNormal, highlight: t.edgeHighlight, hover: t.edgeHighlight },
-                    font: Object.assign({}, edge.font || {}, {
-                        size: 7,
-                        face: "Arial",
-                        color: t.edgeText,
-                        strokeWidth: t.dark ? 1.5 : 1,
-                        strokeColor: t.bgGrafo,
-                        align: "middle",
-                        vadjust: -2
-                    })
-                };
-            }));
+            var btn = document.getElementById('btn-reset');
+            btn.style.backgroundColor = t.btnBg;
 
-            network.redraw();
-        }
+            // Nodos
+            var nodeUpdates = originalNodes.map(function(n) {{
+                var groupTheme = t[n.group] || t.bono;
+                var isSelected = (currentIsolatedValue && (n.id === currentIsolatedValue));
+                return {{
+                    id: n.id,
+                    color: {{
+                        background: groupTheme.bg,
+                        border: isSelected ? t.edgeHighlight : groupTheme.border,
+                        highlight: {{ background: groupTheme.bg, border: t.edgeHighlight }}
+                    }},
+                    borderWidth: isSelected ? 3 : 1.5,
+                    font: {{ color: groupTheme.text, face: 'Arial' }}
+                }};
+            }});
+            nodes.update(nodeUpdates);
 
-        function changeTheme(themeKey) {
+            // Aristas
+            var edgeUpdates = originalEdges.map(function(e) {{
+                return {{
+                    id: e.id,
+                    label: showEdgeLabels ? e.label : "",
+                    color: {{ color: t.edgeNormal, highlight: t.edgeHighlight }},
+                    font: {{ color: t.edgeText, size: 8, strokeWidth: 3, strokeColor: t.bgGrafo }}
+                }};
+            }});
+            edges.update(edgeUpdates);
+        }}
+
+        function changeTheme(themeKey) {{
             applyThemeStyles(themeKey);
-            if (currentIsolatedValue && currentIsolatedType) {
+            if (currentIsolatedValue) {{
                 applyIsolationFilter(currentIsolatedValue, currentIsolatedType);
-            }
-            applyEdgeLabelVisibility();
-        }
+            }}
+        }}
 
-        function applyEdgeLabelVisibility() {
-            edges.update(originalEdges.map(function(edge) {
-                return { id: edge.id, label: edgeLabelsVisible ? (edge.label || "") : "" };
-            }));
-            document.getElementById("btn-edge-labels").textContent = edgeLabelsVisible
-                ? "Ocultar texto aristas"
-                : "Mostrar texto aristas";
-        }
+        // BOTÓN MOSTRAR/OCULTAR FECHAS EN ARISTAS
+        function toggleEdgeLabels() {{
+            showEdgeLabels = !showEdgeLabels;
+            var btn = document.getElementById('btn-toggle-labels');
+            btn.innerText = showEdgeLabels ? "Ocultar Fechas" : "Mostrar Fechas";
 
-        function toggleEdgeLabels() {
-            edgeLabelsVisible = !edgeLabelsVisible;
-            localStorage.setItem("edgeLabelsVisible", String(edgeLabelsVisible));
-            applyEdgeLabelVisibility();
-        }
+            var edgeUpdates = originalEdges.map(function(e) {{
+                return {{
+                    id: e.id,
+                    label: showEdgeLabels ? e.label : ""
+                }};
+            }});
+            edges.update(edgeUpdates);
+        }}
 
-        function applyBaseVisibility(minCount) {
-            if (minCount <= 0) {
-                nodes.update(originalNodes.map(function(n) { return { id: n.id, hidden: false }; }));
-                edges.update(originalEdges.map(function(e) { return { id: e.id, hidden: false }; }));
-                return null;
-            }
+        // TOOLTIP SÓLIDO HTML
+        network.once("beforeDrawing", function() {{
+            var allNodes = nodes.get();
+            var updates = [];
+            allNodes.forEach(function(node) {{
+                if (node.title && typeof node.title === 'string') {{
+                    var container = document.createElement('div');
+                    container.className = 'custom-tooltip-card';
+                    container.innerHTML = node.title;
+                    updates.push({{ id: node.id, title: container }});
+                }}
+            }});
+            if (updates.length > 0) {{ nodes.update(updates); }}
+        }});
 
-            var validEdges = originalEdges.filter(function(e) {
-                return Number(e.cantEndosos || 0) >= minCount;
-            });
-            var validNodeIds = new Set();
-            validEdges.forEach(function(e) {
-                validNodeIds.add(e.from);
-                validNodeIds.add(e.to);
-            });
+        // ACTUALIZAR ESTILO SÓLIDO DEL TOOLTIP SEGÚN TEMA
+        network.on("hoverNode", function() {{
+            var t = THEMES[currentThemeKey] || THEMES.dia1;
+            var tooltips = document.querySelectorAll('.custom-tooltip-card');
+            tooltips.forEach(function(card) {{
+                card.style.backgroundColor = t.tooltipBg;
+                card.style.color = t.tooltipText;
+                card.style.border = "1px solid " + t.tooltipBorder;
+                card.style.borderLeft = "4px solid " + t.edgeHighlight;
+            }});
+        }});
 
-            edges.update(originalEdges.map(function(e) {
-                return { id: e.id, hidden: Number(e.cantEndosos || 0) < minCount };
-            }));
-            nodes.update(originalNodes.map(function(n) {
-                return { id: n.id, hidden: !validNodeIds.has(n.id) };
-            }));
-            return validNodeIds;
-        }
+        // COORDENADAS E INICIALIZACIÓN
+        network.once("stabilizationIterationsDone", function() {{
+            network.setOptions({{ physics: {{ enabled: false }} }});
+            var allIds = nodes.getIds();
+            var pos = network.getPositions(allIds);
+            allIds.forEach(function(id) {{
+                initialPositions[id] = {{ x: pos[id].x, y: pos[id].y }};
+            }});
+        }});
 
-        function fitVisible(duration) {
-            var ids = nodes.get().filter(function(n) { return n.hidden !== true; }).map(function(n) { return n.id; });
-            if (!ids.length) return;
-            network.fit({ nodes: ids, animation: { duration: duration || 500, easingFunction: "easeInOutQuad" } });
-        }
+        network.once("afterDrawing", function () {{
+            originalNodes = JSON.parse(JSON.stringify(nodes.get()));
+            originalEdges = JSON.parse(JSON.stringify(edges.get()));
+            
+            document.getElementById('sel-theme').value = currentThemeKey;
+            applyThemeStyles(currentThemeKey);
+        }});
 
-        function restoreFilteredView(fitGraph) {
+        // BÚSQUEDA RÁPIDA EN DESPLEGABLES
+        document.querySelectorAll('.searchable-select').forEach(function(select) {{
+            var searchStr = "";
+            var searchTimeout;
+            select.addEventListener('keydown', function(e) {{
+                if (e.key.length === 1) {{
+                    searchStr += e.key.toLowerCase();
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(function() {{ searchStr = ""; }}, 1000);
+
+                    for (var i = 0; i < select.options.length; i++) {{
+                        if (select.options[i].text.toLowerCase().includes(searchStr)) {{
+                            select.selectedIndex = i;
+                            select.dispatchEvent(new Event('change'));
+                            break;
+                        }}
+                    }}
+                }}
+            }});
+        }});
+
+        function updateSelectDropdowns(validNodeIds) {{
+            var selBono = document.getElementById('sel-bono');
+            var selEndo = document.getElementById('sel-endosatario');
+            var selBene = document.getElementById('sel-beneficiario');
+
+            var valBono = selBono.value;
+            var valEndo = selEndo.value;
+            var valBene = selBene.value;
+
+            var bonosList = []; var endoList = []; var beneList = [];
+
+            originalNodes.forEach(function(n) {{
+                if (!validNodeIds || validNodeIds.has(n.id)) {{
+                    if (n.group === 'bono') bonosList.push(n.id);
+                    if (n.group === 'endosatario') endoList.push(n.id);
+                    if (n.group === 'beneficiario') beneList.push(n.id);
+                }}
+            }});
+
+            bonosList.sort(); endoList.sort(); beneList.sort();
+
+            selBono.innerHTML = '<option value="">-- Todos --</option>' + bonosList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
+            selEndo.innerHTML = '<option value="">-- Todos --</option>' + endoList.map(e => `<option value="${{e}}">${{e}}</option>`).join('');
+            selBene.innerHTML = '<option value="">-- Todos --</option>' + beneList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
+
+            selBono.value = bonosList.includes(valBono) ? valBono : "";
+            selEndo.value = endoList.includes(valEndo) ? valEndo : "";
+            selBene.value = beneList.includes(valBene) ? valBene : "";
+        }}
+
+        // FILTRO MIN. ENDOSOS
+        function filterByEndosos(minCount) {{
+            minCount = parseInt(minCount, 10);
             currentIsolatedValue = null;
             currentIsolatedType = null;
-            clearEntitySelections();
 
-            var minCount = parseInt(document.getElementById("sel-min-endosos").value, 10) || 0;
-            var validNodeIds = applyBaseVisibility(minCount);
-            updateSelectDropdowns(validNodeIds);
-            applyThemeStyles(currentThemeKey);
-            applyEdgeLabelVisibility();
-            network.unselectAll();
-            if (fitGraph !== false) fitVisible(500);
-        }
-
-        function filterByEndosos(minCount) {
-            document.getElementById("sel-min-endosos").value = String(parseInt(minCount, 10) || 0);
-            restoreFilteredView(true);
-        }
-
-        function clearIsolation() {
-            restoreFilteredView(true);
-        }
-
-        function applyIsolationFilter(selectedValue, type) {
-            if (!selectedValue) {
-                clearIsolation();
+            if (minCount === 0) {{
+                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
+                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
+                updateSelectDropdowns(null);
                 return;
-            }
+            }}
 
+            var validEdges = originalEdges.filter(e => e.cantEndosos >= minCount);
+            var validNodeIds = new Set();
+            validEdges.forEach(function(e) {{
+                validNodeIds.add(e.from);
+                validNodeIds.add(e.to);
+            }});
+
+            edges.update(originalEdges.map(e => ({{ id: e.id, hidden: e.cantEndosos < minCount }})));
+            nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: !validNodeIds.has(n.id) }})));
+
+            updateSelectDropdowns(validNodeIds);
+        }}
+
+        // AISLAMIENTO
+        function applyIsolationFilter(selectedValue, type) {{
             var t = THEMES[currentThemeKey] || THEMES.dia1;
-            if (type !== "bono") document.getElementById("sel-bono").value = "";
-            if (type !== "endosatario") document.getElementById("sel-endosatario").value = "";
-            if (type !== "beneficiario") document.getElementById("sel-beneficiario").value = "";
+
+            if (type !== 'bono') document.getElementById('sel-bono').value = "";
+            if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
+            if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
+
+            if (!selectedValue) {{
+                var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+                filterByEndosos(minCount);
+                return;
+            }}
 
             currentIsolatedValue = selectedValue;
             currentIsolatedType = type;
 
-            var minCount = parseInt(document.getElementById("sel-min-endosos").value, 10) || 0;
             var activeBonos = new Set();
-            if (type === "bono") {
-                activeBonos.add(selectedValue);
-            } else {
-                originalEdges.forEach(function(edge) {
-                    var linked = edge.from === selectedValue || edge.to === selectedValue;
-                    if (linked && Number(edge.cantEndosos || 0) >= minCount && edge.bono) {
-                        activeBonos.add(edge.bono);
-                    }
-                });
-            }
-
+            var activeNodes = new Set();
             var activeEdges = new Set();
-            var activeNodes = new Set([selectedValue]);
-            originalEdges.forEach(function(edge) {
-                if (activeBonos.has(edge.bono) && Number(edge.cantEndosos || 0) >= minCount) {
+
+            if (type === 'bono') {{
+                activeBonos.add(selectedValue);
+                activeNodes.add(selectedValue);
+            }} else {{
+                activeNodes.add(selectedValue);
+                originalEdges.forEach(function(edge) {{
+                    if (edge.from === selectedValue || edge.to === selectedValue) {{
+                        if (edge.bono) activeBonos.add(edge.bono);
+                    }}
+                }});
+            }}
+
+            originalEdges.forEach(function(edge) {{
+                if (activeBonos.has(edge.bono)) {{
                     activeEdges.add(edge.id);
                     activeNodes.add(edge.from);
                     activeNodes.add(edge.to);
-                }
-            });
+                }}
+            }});
 
-            nodes.update(originalNodes.map(function(node) {
-                var active = activeNodes.has(node.id);
-                var gt = groupTheme(t, node.group);
-                return {
-                    id: node.id,
-                    hidden: !active,
-                    borderWidth: active ? 3 : 1.5,
-                    color: {
-                        background: gt.bg,
-                        border: active ? t.edgeHighlight : gt.border,
-                        highlight: { background: gt.bg, border: t.edgeHighlight },
-                        hover: { background: gt.bg, border: t.edgeHighlight }
-                    },
-                    font: Object.assign({}, node.font || {}, { color: gt.text, face: "Arial" })
-                };
-            }));
+            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
 
-            edges.update(originalEdges.map(function(edge) {
-                var active = activeEdges.has(edge.id);
-                return {
-                    id: edge.id,
-                    hidden: !active,
-                    width: active ? 3.8 : 1.5,
-                    color: { color: active ? t.edgeHighlight : t.edgeNormal, highlight: t.edgeHighlight, hover: t.edgeHighlight },
-                    font: Object.assign({}, edge.font || {}, {
-                        size: 7,
-                        face: "Arial",
-                        color: t.edgeText,
-                        strokeWidth: t.dark ? 1.5 : 1,
-                        strokeColor: t.bgGrafo,
-                        align: "middle",
-                        vadjust: -2
-                    })
-                };
-            }));
+            nodes.update(originalNodes.map(n => {{
+                var isActive = activeNodes.has(n.id);
+                var groupTheme = t[n.group] || t.bono;
+                return {{
+                    id: n.id,
+                    hidden: !isActive,
+                    borderWidth: isActive ? 3 : 1.5,
+                    color: {{
+                        background: groupTheme.bg,
+                        border: isActive ? t.edgeHighlight : groupTheme.border
+                    }}
+                }};
+            }}));
 
-            applyEdgeLabelVisibility();
-            if (activeNodes.size) {
-                network.fit({ nodes: Array.from(activeNodes), animation: { duration: 600, easingFunction: "easeInOutQuad" } });
-            }
-            setTimeout(function() { network.unselectAll(); }, 50);
-        }
+            edges.update(originalEdges.map(e => {{
+                var isActive = activeEdges.has(e.id);
+                return {{
+                    id: e.id,
+                    hidden: !isActive || (minCount > 0 && e.cantEndosos < minCount),
+                    width: isActive ? 3.8 : 1.5,
+                    color: {{ color: isActive ? t.edgeHighlight : t.edgeNormal }}
+                }};
+            }}));
 
-        network.on("click", function(params) {
-            var hasNode = params.nodes.length > 0;
-            var hasEdge = params.edges.length > 0;
+            network.fit({{ nodes: Array.from(activeNodes), animation: {{ duration: 600 }} }});
+        }}
 
-            /* Clic real sobre fondo: deselecciona y vuelve al filtro base. */
-            if (!hasNode && !hasEdge) {
-                clearIsolation();
-                return;
-            }
+        // DESELECCIÓN TOTAL AL TOCAR EL BACKGROUND
+        network.on("click", function (params) {{
+            setTimeout(function() {{ network.unselectAll(); }}, 50);
 
-            if (hasNode) {
-                var nodeId = params.nodes[0];
-                var node = nodes.get(nodeId);
-                if (!node) return;
+            if (params.nodes.length > 0) {{
+                var selectedNodeId = params.nodes[0];
+                var clickedNode = nodes.get(selectedNodeId);
 
-                if (currentIsolatedValue === nodeId && currentIsolatedType === node.group) {
-                    clearIsolation();
-                    return;
-                }
+                if (clickedNode) {{
+                    var type = clickedNode.group;
+                    if (currentIsolatedValue === selectedNodeId && currentIsolatedType === type) {{
+                        applyIsolationFilter("", type);
+                        return;
+                    }}
+                    if (type === 'bono') document.getElementById('sel-bono').value = selectedNodeId;
+                    else if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedNodeId;
+                    else if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedNodeId;
 
-                clearEntitySelections();
-                if (node.group === "bono") document.getElementById("sel-bono").value = nodeId;
-                if (node.group === "endosatario") document.getElementById("sel-endosatario").value = nodeId;
-                if (node.group === "beneficiario") document.getElementById("sel-beneficiario").value = nodeId;
-                applyIsolationFilter(nodeId, node.group);
-                return;
-            }
+                    applyIsolationFilter(selectedNodeId, type);
+                }}
+            }} else if (params.edges.length > 0) {{
+                var edgeId = params.edges[0];
+                var clickedEdge = edges.get(edgeId);
 
-            if (hasEdge) {
-                var edge = edges.get(params.edges[0]);
-                if (!edge || !edge.bono) return;
+                if (clickedEdge && clickedEdge.bono) {{
+                    var bonoId = clickedEdge.bono;
+                    if (currentIsolatedValue === bonoId && currentIsolatedType === 'bono') {{
+                        applyIsolationFilter("", 'bono');
+                        return;
+                    }}
+                    document.getElementById('sel-bono').value = bonoId;
+                    applyIsolationFilter(bonoId, 'bono');
+                }}
+            }} else {{
+                // CLIC EN EL BACKGROUND: Limpia la selección y restaura la vista
+                var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+                filterByEndosos(minCount);
+            }}
+        }});
 
-                if (currentIsolatedValue === edge.bono && currentIsolatedType === "bono") {
-                    clearIsolation();
-                    return;
-                }
-
-                clearEntitySelections();
-                document.getElementById("sel-bono").value = edge.bono;
-                applyIsolationFilter(edge.bono, "bono");
-            }
-        });
-
-        document.querySelectorAll(".searchable-select").forEach(function(select) {
-            var search = "";
-            var timer = null;
-            select.addEventListener("keydown", function(event) {
-                if (event.key.length !== 1) return;
-                search += event.key.toLowerCase();
-                clearTimeout(timer);
-                timer = setTimeout(function() { search = ""; }, 1000);
-                for (var i = 0; i < select.options.length; i++) {
-                    if (select.options[i].text.toLowerCase().includes(search)) {
-                        select.selectedIndex = i;
-                        select.dispatchEvent(new Event("change"));
-                        break;
-                    }
-                }
-            });
-        });
-
-        function capturePositionsAndFreeze() {
-            if (positionsCaptured) return;
-            network.setOptions({ physics: { enabled: false } });
-            var ids = nodes.getIds();
-            var positions = network.getPositions(ids);
-            ids.forEach(function(id) {
-                if (positions[id]) initialPositions[id] = { x: positions[id].x, y: positions[id].y };
-            });
-            positionsCaptured = true;
-        }
-
-        network.once("stabilizationIterationsDone", capturePositionsAndFreeze);
-
-        function resetZoom() {
-            document.getElementById("sel-min-endosos").value = "0";
+        // RESTABLECER ESTADO
+        function resetZoom() {{
+            document.getElementById('sel-min-endosos').value = "0";
             currentIsolatedValue = null;
             currentIsolatedType = null;
-            clearEntitySelections();
+
             updateSelectDropdowns(null);
-
-            nodes.update(originalNodes.map(function(node) {
-                var update = { id: node.id, hidden: false };
-                if (initialPositions[node.id]) {
-                    update.x = initialPositions[node.id].x;
-                    update.y = initialPositions[node.id].y;
-                }
-                return update;
-            }));
-            edges.update(originalEdges.map(function(edge) { return { id: edge.id, hidden: false }; }));
-
             applyThemeStyles(currentThemeKey);
-            applyEdgeLabelVisibility();
-            network.unselectAll();
-            network.fit({ animation: { duration: 600, easingFunction: "easeInOutQuad" } });
-        }
 
-        buildMinOptions();
-        updateSelectDropdowns(null);
-        document.getElementById("sel-theme").value = currentThemeKey;
-        applyThemeStyles(currentThemeKey);
-        applyEdgeLabelVisibility();
+            var nodeUpdates = [];
+            for (var nodeId in initialPositions) {{
+                nodeUpdates.push({{
+                    id: nodeId,
+                    x: initialPositions[nodeId].x,
+                    y: initialPositions[nodeId].y,
+                    hidden: false
+                }});
+            }}
+            nodes.update(nodeUpdates);
+            edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false, label: showEdgeLabels ? e.label : "" }})));
+
+            network.fit({{ animation: {{ duration: 600 }} }});
+            network.unselectAll();
+        }}
     </script>
     """
 
-    panel_html = panel_html.replace("__MAX_ENDOSOS__", str(int(max_endosos)))
-
-    if "</body>" not in content:
-        raise ValueError("No se encontró la etiqueta </body> en el HTML generado por PyVis.")
-
-    new_content = content.replace("</body>", panel_html + "\n</body>", 1)
+    new_content = content.replace("</body>", f"{panel_html}\n</body>")
 
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
