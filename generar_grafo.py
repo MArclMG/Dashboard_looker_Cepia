@@ -52,6 +52,34 @@ def main():
     endosatarios_set = set()
     beneficiarios_set = set()
     max_endosos_encontrados = 0
+    in_degree_counter = {}  # Para contar cuántas veces recibe endosos cada nodo
+
+    # 1. Primer pase: Recopilar datos y contar endosos por nodo
+    for _, row in df.iterrows():
+        cepia_id = normalizar_texto(row.get('N° Cepia', ''))
+        beneficiario_id = normalizar_texto(row.get('Beneficiario', ''))
+        if not cepia_id: 
+            continue
+
+        bonos_set.add(cepia_id)
+        if beneficiario_id:
+            beneficiarios_set.add(beneficiario_id)
+
+        i_temp = 1
+        num_endosos_bono = 0
+        while True:
+            col_check = next((c for c in df.columns if c.strip().lower() == f'endosatario_{i_temp}'), None)
+            if not col_check:
+                break
+            val_endo = normalizar_texto(row.get(col_check, ''))
+            if val_endo:
+                num_endosos_bono += 1
+                endosatarios_set.add(val_endo)
+                in_degree_counter[val_endo] = in_degree_counter.get(val_endo, 0) + 1
+            i_temp += 1
+
+        if num_endosos_bono > max_endosos_encontrados:
+            max_endosos_encontrados = num_endosos_bono
 
     net = Network(
         height="850px", 
@@ -62,7 +90,6 @@ def main():
         font_color="#2B2B2B"
     )
     
-    # CONFIGURACIÓN DE FÍSICA ESTABILIZADA Y CONGELADA
     net.set_options("""
     {
       "interaction": {
@@ -111,10 +138,10 @@ def main():
     }
     """)
 
+    # 2. Segundo pase: Construir nodos con tamaños dinámicos sutiles
     for _, row in df.iterrows():
         cepia_id = normalizar_texto(row.get('N° Cepia', ''))
         beneficiario_id = normalizar_texto(row.get('Beneficiario', ''))
-
         if not cepia_id: 
             continue
 
@@ -124,25 +151,18 @@ def main():
             col_check = next((c for c in df.columns if c.strip().lower() == f'endosatario_{i_temp}'), None)
             if not col_check:
                 break
-            val_endo = normalizar_texto(row.get(col_check, ''))
-            if val_endo:
+            if normalizar_texto(row.get(col_check, '')):
                 num_endosos_bono += 1
             i_temp += 1
 
-        if num_endosos_bono > max_endosos_encontrados:
-            max_endosos_encontrados = num_endosos_bono
-
-        bonos_set.add(cepia_id)
-        if beneficiario_id:
-            beneficiarios_set.add(beneficiario_id)
-
+        # Bono base size
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
             title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Endosos:</b> {num_endosos_bono}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
             group="bono",
             cantEndosos=num_endosos_bono,
-            size=22,
+            size=20,
             font={"size": 11, "face": "arial", "bold": True, "color": "#1C2B1C"}
         )
 
@@ -171,16 +191,20 @@ def main():
             fecha_val = str(row.get(col_fecha, '')).strip() if col_fecha else ""
 
             if endosatario_id:
-                endosatarios_set.add(endosatario_id)
-
                 label_endo = acortar_texto(endosatario_id, 14)
+                
+                # ESCALADO LEVE SUTIL: Base 12px + 2px por cada endoso recibido (Máximo tope 28px)
+                endosos_recibidos = in_degree_counter.get(endosatario_id, 1)
+                size_dinamico = min(12 + (endosos_recibidos * 2), 28)
+
                 net.add_node(
                     endosatario_id, 
                     label=label_endo, 
-                    title=f"<b>Endosatario Completo:</b><br>{endosatario_id}", 
+                    title=f"<b>Endosatario:</b> {endosatario_id}<br><b>Endosos Recibidos Total:</b> {endosos_recibidos}", 
                     group="endosatario",
                     shape="box",
-                    widthConstraint={"maximum": 110},
+                    size=size_dinamico,
+                    widthConstraint={"maximum": 120},
                     font={"size": 9, "face": "arial", "color": "#3B1E13"}
                 )
                 
@@ -199,7 +223,6 @@ def main():
                     smooth={"type": "curvedCW", "roundness": 0.25},
                     font={"size": 8, "align": "middle", "color": "#777777"}
                 )
-                
                 nodo_actual = endosatario_id
             i += 1
 
@@ -224,7 +247,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
-    print(f"✅ Grafo procesado con aislamiento y restablecimiento de posiciones en: {output_path}")
+    print(f"✅ Grafo procesado con escalado sutil de nodos y filtros vinculados en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
@@ -331,7 +354,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var currentIsolatedValue = null;
         var currentIsolatedType = null;
 
-        // 1. CONGELAR FÍSICA Y CAPTURAR COORDENADAS INICIALES EXACTAS
+        // 1. REGISTRO FÍSICO INICIAL Y COORDENADAS
         network.once("stabilizationIterationsDone", function() {{
             network.setOptions({{ physics: {{ enabled: false }} }});
             var allIds = nodes.getIds();
@@ -346,39 +369,77 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
-        // 2. FILTRO POR MÍNIMO DE ENDOSOS
+        // RE-POBLAR SELECTORES HTML EN FUNCIÓN DEL FILTRO ACTIVO
+        function updateSelectDropdowns(validNodeIds) {{
+            var selBono = document.getElementById('sel-bono');
+            var selEndo = document.getElementById('sel-endosatario');
+            var selBene = document.getElementById('sel-beneficiario');
+
+            var valBono = selBono.value;
+            var valEndo = selEndo.value;
+            var valBene = selBene.value;
+
+            var bonosList = [];
+            var endoList = [];
+            var beneList = [];
+
+            originalNodes.forEach(function(n) {{
+                if (!validNodeIds || validNodeIds.has(n.id)) {{
+                    if (n.group === 'bono') bonosList.push(n.id);
+                    if (n.group === 'endosatario') endoList.push(n.id);
+                    if (n.group === 'beneficiario') beneList.push(n.id);
+                }}
+            }});
+
+            bonosList.sort(); endoList.sort(); beneList.sort();
+
+            selBono.innerHTML = '<option value="">-- Todos --</option>' + bonosList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
+            selEndo.innerHTML = '<option value="">-- Todos --</option>' + endoList.map(e => `<option value="${{e}}">${{e}}</option>`).join('');
+            selBene.innerHTML = '<option value="">-- Todos --</option>' + beneList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
+
+            selBono.value = bonosList.includes(valBono) ? valBono : "";
+            selEndo.value = endoList.includes(valEndo) ? valEndo : "";
+            selBene.value = beneList.includes(valBene) ? valBene : "";
+        }}
+
+        // 2. FILTRO INDEPENDIENTE Y CASCADA DE CANTIDAD DE ENDOSOS
         function filterByEndosos(minCount) {{
             minCount = parseInt(minCount, 10);
-            clearHighlightState();
+            
+            // Limpiar aislamientos para aplicar el nuevo filtro base
+            currentIsolatedValue = null;
+            currentIsolatedType = null;
 
             if (minCount === 0) {{
                 nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
                 edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
+                updateSelectDropdowns(null);
                 return;
             }}
 
-            var validEdges = originalEdges.filter(function(edge) {{
-                return edge.cantEndosos >= minCount;
-            }});
-
+            var validEdges = originalEdges.filter(e => e.cantEndosos >= minCount);
             var validNodeIds = new Set();
-            validEdges.forEach(function(edge) {{
-                validNodeIds.add(edge.from);
-                validNodeIds.add(edge.to);
+            validEdges.forEach(function(e) {{
+                validNodeIds.add(e.from);
+                validNodeIds.add(e.to);
             }});
 
             edges.update(originalEdges.map(e => ({{ id: e.id, hidden: e.cantEndosos < minCount }})));
             nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: !validNodeIds.has(n.id) }})));
+
+            // Actualizar opciones de los desplegables en cascada
+            updateSelectDropdowns(validNodeIds);
         }}
 
-        // 3. AISLAMIENTO EXCLUSIVO DE NODOS (BONO / ENDOSATARIO / BENEFICIARIO)
+        // 3. AISLAMIENTO EXCLUSIVO DE NODOS
         function applyIsolationFilter(selectedValue, type) {{
             if (type !== 'bono') document.getElementById('sel-bono').value = "";
             if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
 
             if (!selectedValue) {{
-                clearHighlightState();
+                var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+                filterByEndosos(minCount);
                 return;
             }}
 
@@ -409,14 +470,23 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }}
             }});
 
-            // Ocultar todo lo que no pertenezca a la selección activa
-            nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: !activeNodes.has(n.id) }})));
-            edges.update(originalEdges.map(e => ({{ id: e.id, hidden: !activeEdges.has(e.id) }})));
+            // Respetar también el filtro de endosos si está activo
+            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+
+            nodes.update(originalNodes.map(n => ({{
+                id: n.id,
+                hidden: !activeNodes.has(n.id)
+            }})));
+
+            edges.update(originalEdges.map(e => ({{
+                id: e.id,
+                hidden: !activeEdges.has(e.id) || (minCount > 0 && e.cantEndosos < minCount)
+            }})));
 
             network.fit({{ nodes: Array.from(activeNodes), animation: {{ duration: 600 }} }});
         }}
 
-        // 4. INTERACCIÓN AL HACER CLIC EN UN NODO O ARISTA (TOGGLE DE SELECCIÓN)
+        // 4. INTERACCIÓN AL HACER CLIC EN UN NODO O ARISTA
         network.on("click", function (params) {{
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
@@ -427,7 +497,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 if (clickedNode) {{
                     var type = clickedNode.group;
                     if (currentIsolatedValue === selectedNodeId && currentIsolatedType === type) {{
-                        clearHighlightState();
+                        applyIsolationFilter("", type);
                         return;
                     }}
                     if (type === 'bono') document.getElementById('sel-bono').value = selectedNodeId;
@@ -443,40 +513,26 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 if (clickedEdge && clickedEdge.bono) {{
                     var bonoId = clickedEdge.bono;
                     if (currentIsolatedValue === bonoId && currentIsolatedType === 'bono') {{
-                        clearHighlightState();
+                        applyIsolationFilter("", 'bono');
                         return;
                     }}
                     document.getElementById('sel-bono').value = bonoId;
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
-                clearHighlightState();
+                var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+                filterByEndosos(minCount);
             }}
         }});
 
-        function clearHighlightState() {{
+        // 5. RESTABLECER POSICIONES Y ESTADO COMPLETO
+        function resetZoom() {{
+            document.getElementById('sel-min-endosos').value = "0";
             currentIsolatedValue = null;
             currentIsolatedType = null;
 
-            document.getElementById('sel-bono').value = "";
-            document.getElementById('sel-endosatario').value = "";
-            document.getElementById('sel-beneficiario').value = "";
+            updateSelectDropdowns(null);
 
-            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
-            if (minCount > 0) {{
-                filterByEndosos(minCount);
-            }} else {{
-                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
-                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
-            }}
-        }}
-
-        // 5. RESTABLECER POSICIONES, FILTROS Y ENCUADRE
-        function resetZoom() {{
-            document.getElementById('sel-min-endosos').value = "0";
-            clearHighlightState();
-
-            // Restaurar posiciones (x, y) guardadas tras la estabilización
             var nodeUpdates = [];
             for (var nodeId in initialPositions) {{
                 nodeUpdates.push({{
