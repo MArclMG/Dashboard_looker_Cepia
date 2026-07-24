@@ -52,9 +52,8 @@ def main():
     endosatarios_set = set()
     beneficiarios_set = set()
     max_endosos_encontrados = 0
-    in_degree_counter = {}  # Para contar cuántas veces recibe endosos cada nodo
+    in_degree_counter = {}
 
-    # 1. Primer pase: Recopilar datos y contar endosos por nodo
     for _, row in df.iterrows():
         cepia_id = normalizar_texto(row.get('N° Cepia', ''))
         beneficiario_id = normalizar_texto(row.get('Beneficiario', ''))
@@ -82,7 +81,7 @@ def main():
             max_endosos_encontrados = num_endosos_bono
 
     net = Network(
-        height="850px", 
+        height="100vh", 
         width="100%", 
         directed=True, 
         notebook=False, 
@@ -120,25 +119,10 @@ def main():
           "onlyDynamicEdges": false,
           "fit": true
         }
-      },
-      "groups": {
-        "bono": {
-          "color": {"background": "#A8BFA8", "border": "#7F9A7F", "highlight": {"background": "#A8BFA8", "border": "#C65A72"}},
-          "shape": "dot"
-        },
-        "endosatario": {
-          "color": {"background": "#D8A48F", "border": "#B87E67", "highlight": {"background": "#D8A48F", "border": "#C65A72"}},
-          "shape": "box"
-        },
-        "beneficiario": {
-          "color": {"background": "#F0D9A7", "border": "#D8B775", "highlight": {"background": "#F0D9A7", "border": "#C65A72"}},
-          "shape": "dot"
-        }
       }
     }
     """)
 
-    # 2. Segundo pase: Construir nodos con tamaños dinámicos sutiles
     for _, row in df.iterrows():
         cepia_id = normalizar_texto(row.get('N° Cepia', ''))
         beneficiario_id = normalizar_texto(row.get('Beneficiario', ''))
@@ -155,26 +139,30 @@ def main():
                 num_endosos_bono += 1
             i_temp += 1
 
-        # Bono base size
+        title_bono = f"<b>BONO (N° CEPIA):</b> {cepia_id}<br><b>Endosos Total:</b> {num_endosos_bono}<br><b>Beneficiario Final:</b> {beneficiario_id}"
+
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
-            title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Endosos:</b> {num_endosos_bono}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
+            title=title_bono, 
             group="bono",
+            shape="dot",
             cantEndosos=num_endosos_bono,
             size=20,
-            font={"size": 11, "face": "arial", "bold": True, "color": "#1C2B1C"}
+            font={"size": 11, "face": "Arial", "bold": True}
         )
 
         if beneficiario_id:
             label_benef = acortar_texto(beneficiario_id, 12)
+            title_benef = f"<b>BENEFICIARIO COMPLETO:</b><br>{beneficiario_id}"
             net.add_node(
                 beneficiario_id, 
                 label=label_benef, 
-                title=f"<b>Beneficiario Completo:</b><br>{beneficiario_id}", 
+                title=title_benef, 
                 group="beneficiario",
+                shape="dot",
                 size=14,
-                font={"size": 9, "face": "arial", "color": "#3D3015"}
+                font={"size": 10, "face": "Arial"}
             )
 
         nodo_actual = cepia_id
@@ -192,20 +180,20 @@ def main():
 
             if endosatario_id:
                 label_endo = acortar_texto(endosatario_id, 14)
-                
-                # ESCALADO LEVE SUTIL: Base 12px + 2px por cada endoso recibido (Máximo tope 28px)
                 endosos_recibidos = in_degree_counter.get(endosatario_id, 1)
-                size_dinamico = min(12 + (endosos_recibidos * 2), 28)
+                size_dinamico = min(12 + (endosos_recibidos * 2), 26)
+
+                title_endo = f"<b>ENDOSATARIO:</b> {endosatario_id}<br><b>Endosos Recibidos:</b> {endosos_recibidos}"
 
                 net.add_node(
                     endosatario_id, 
                     label=label_endo, 
-                    title=f"<b>Endosatario:</b> {endosatario_id}<br><b>Endosos Recibidos Total:</b> {endosos_recibidos}", 
+                    title=title_endo, 
                     group="endosatario",
                     shape="box",
                     size=size_dinamico,
                     widthConstraint={"maximum": 120},
-                    font={"size": 9, "face": "arial", "color": "#3B1E13"}
+                    font={"size": 10, "face": "Arial"}
                 )
                 
                 label_arista = f"E{i}: {fecha_val}" if fecha_val else f"Endoso {i}"
@@ -215,13 +203,12 @@ def main():
                     endosatario_id, 
                     label=label_arista, 
                     title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
-                    color={"color": "#B9B4AE", "highlight": "#C65A72"},
                     width=1.5,
                     bono=cepia_id,
                     cantEndosos=num_endosos_bono,
                     arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
                     smooth={"type": "curvedCW", "roundness": 0.25},
-                    font={"size": 8, "align": "middle", "color": "#777777"}
+                    font={"size": 8, "align": "middle"}
                 )
                 nodo_actual = endosatario_id
             i += 1
@@ -231,15 +218,14 @@ def main():
                 nodo_actual, 
                 beneficiario_id, 
                 label="Asignado a", 
-                title=f"Bono: {cepia_id} | Registro de Beneficiario", 
-                color={"color": "#B9B4AE", "highlight": "#C65A72"}, 
+                title=f"Bono: {cepia_id} | Beneficiario Final", 
                 width=1.5,
                 dashes=True,
                 bono=cepia_id,
                 cantEndosos=num_endosos_bono,
                 arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
                 smooth={"type": "curvedCW", "roundness": 0.2},
-                font={"size": 8, "align": "middle", "color": "#777777"}
+                font={"size": 8, "align": "middle"}
             )
 
     os.makedirs("docs", exist_ok=True)
@@ -247,7 +233,8 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
-    print(f"✅ Grafo procesado con escalado sutil de nodos y filtros vinculados en: {output_path}")
+    print(f"✅ Grafo procesado con selector de 4 temas y búsqueda rápida en: {output_path}")
+
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
     with open(html_path, 'r', encoding='utf-8') as f:
@@ -270,27 +257,28 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
     panel_html = f"""
     <style>
+        body, html {{
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+            font-family: Arial, sans-serif;
+        }}
         #filter-panel {{
             position: absolute;
             top: 10px;
             left: 10px;
             z-index: 1000;
-            background: rgba(250, 250, 250, 0.95);
             padding: 12px 16px;
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            border: 1px solid #E0DAD3;
-            font-family: Arial, sans-serif;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             font-size: 13px;
             display: flex;
             gap: 12px;
             align-items: center;
             flex-wrap: wrap;
             max-width: 95%;
+            transition: all 0.3s ease;
         }}
         #filter-panel label {{
             font-weight: bold;
-            color: #333;
             display: flex;
             flex-direction: column;
             gap: 4px;
@@ -298,57 +286,52 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         #filter-panel select, #filter-panel button {{
             padding: 6px 10px;
             border-radius: 4px;
-            border: 1px solid #CCC;
-            background-color: #FFF;
             font-size: 12px;
+            outline: none;
+            transition: all 0.2s ease;
         }}
         #filter-panel button {{
-            background-color: #C65A72;
             color: white;
             border: none;
             cursor: pointer;
             font-weight: bold;
             margin-top: 16px;
         }}
-        #filter-panel button:hover {{
-            background-color: #A8455B;
-        }}
 
-        /* ESTILIZADO DE TARJETAS TAG PARA TOOLTIPS (HOVER) CON AUTO-AJUSTE */
+        /* ESTILIZADO TOOLTIP DE GRAFO */
         div.vis-tooltip {{
             position: absolute !important;
             background-color: transparent !important;
             border: none !important;
             padding: 0 !important;
-            font-family: Arial, sans-serif !important;
             z-index: 9999 !important;
             pointer-events: none;
         }}
         .custom-tooltip-card {{
-            background: #FFFFFF;
-            border: 1px solid #E0DAD3;
-            border-left: 4px solid #C65A72;
             border-radius: 6px;
             padding: 8px 12px;
-            box-shadow: 0 4px 14px rgba(0,0,0,0.15);
-            color: #2B2B2B;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.25);
             font-size: 12px;
             line-height: 1.4;
-            
-            /* PROPIEDADES DE ANCHO Y SALTO DE LÍNEA DINÁMICO */
-            width: max-content;          /* Se ajusta al tamaño exacto del texto si es corto */
-            min-width: 180px;            /* Tamaño mínimo estético */
-            max-width: 320px;            /* Ancho máximo en pantalla */
-            white-space: normal;         /* Permite saltos de línea automáticos */
-            overflow-wrap: break-word;   /* Parte las palabras largas si superan el max-width */
-            word-break: break-word;      /* Asegura el quiebre de texto en cualquier navegador */
-        }}
-        .custom-tooltip-card strong {{
-            color: #1A1A1A;
+            width: max-content;
+            min-width: 180px;
+            max-width: 320px;
+            white-space: normal;
+            overflow-wrap: break-word;
+            word-break: break-word;
         }}
     </style>
 
     <div id="filter-panel">
+        <label>Tema:
+            <select id="sel-theme" onchange="changeTheme(this.value)">
+                <option value="dia1">Día · Salvia / Terracota / Crema</option>
+                <option value="dia2">Día · Azul Acero / Teal Vivo / Mostaza</option>
+                <option value="noche1">Noche · Petróleo / Pino / Ámbar</option>
+                <option value="noche2">Noche · Grafito / Índigo / Cobre Vivo</option>
+            </select>
+        </label>
+
         <label>Min. Endosos:
             <select id="sel-min-endosos" onchange="filterByEndosos(this.value)">
                 {opts_num_endosos}
@@ -356,41 +339,154 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         </label>
 
         <label>Bono (N° Cepia):
-            <select id="sel-bono" onchange="applyIsolationFilter(this.value, 'bono')">
+            <select id="sel-bono" class="searchable-select" onchange="applyIsolationFilter(this.value, 'bono')">
                 <option value="">-- Todos --</option>
                 {opts_bonos}
             </select>
         </label>
 
         <label>Endosatario:
-            <select id="sel-endosatario" onchange="applyIsolationFilter(this.value, 'endosatario')">
+            <select id="sel-endosatario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'endosatario')">
                 <option value="">-- Todos --</option>
                 {opts_endosatarios}
             </select>
         </label>
 
         <label>Beneficiario:
-            <select id="sel-beneficiario" onchange="applyIsolationFilter(this.value, 'beneficiario')">
+            <select id="sel-beneficiario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'beneficiario')">
                 <option value="">-- Todos --</option>
                 {opts_beneficiarios}
             </select>
         </label>
 
-        <button onclick="resetZoom()">Restablecer Vista</button>
+        <button id="btn-reset" onclick="resetZoom()">Restablecer Vista</button>
     </div>
 
     <script>
+        // CONFIGURACIÓN DE PALETAS DE COLOR OFICIALES
+        var THEMES = {{
+            dia1: {{
+                name: "Día · Salvia / Terracota / Crema",
+                bgGrafo: "#FAFAFA", panelBg: "rgba(250, 250, 250, 0.95)", panelBorder: "#E0DAD3",
+                textGen: "#2B2B2B", textCtrl: "#333333", ctrlBg: "#FFFFFF", ctrlBorder: "#CCCCCC",
+                btnBg: "#C65A72", btnHover: "#A8455B",
+                bono: {{ bg: "#A8BFA8", border: "#7F9A7F", text: "#1C2B1C" }},
+                empresa: {{ bg: "#D8A48F", border: "#B87E67", text: "#3B1E13" }},
+                beneficiario: {{ bg: "#F0D9A7", border: "#D8B775", text: "#3D3015" }},
+                edgeNormal: "#B9B4AE", edgeText: "#666666", edgeHighlight: "#C65A72"
+            }},
+            dia2: {{
+                name: "Día · Azul Acero / Teal Vivo / Mostaza",
+                bgGrafo: "#F4F7FB", panelBg: "rgba(255, 255, 255, 0.95)", panelBorder: "#D8E0EA",
+                textGen: "#243342", textCtrl: "#243342", ctrlBg: "#FFFFFF", ctrlBorder: "#D8E0EA",
+                btnBg: "#D94F70", btnHover: "#B83A58",
+                bono: {{ bg: "#8FB3D9", border: "#4F7DA8", text: "#18324A" }},
+                empresa: {{ bg: "#74C3B4", border: "#2E8F80", text: "#113B36" }},
+                beneficiario: {{ bg: "#E6C15A", border: "#B48A18", text: "#4A3710" }},
+                edgeNormal: "#9EA7B3", edgeText: "#58606B", edgeHighlight: "#D94F70"
+            }},
+            noche1: {{
+                name: "Noche · Petróleo / Pino / Ámbar",
+                bgGrafo: "#111827", panelBg: "rgba(31, 41, 55, 0.95)", panelBorder: "#374151",
+                textGen: "#E5E7EB", textCtrl: "#E5E7EB", ctrlBg: "#111827", ctrlBorder: "#374151",
+                btnBg: "#FF6B81", btnHover: "#FF8597",
+                bono: {{ bg: "#3C5A73", border: "#7FA3BF", text: "#F5FAFF" }},
+                empresa: {{ bg: "#3D746D", border: "#79B7AE", text: "#F4FFFDB" }},
+                beneficiario: {{ bg: "#8A6A2F", border: "#D6B15E", text: "#FFF8E5" }},
+                edgeNormal: "#64748B", edgeText: "#CBD5E1", edgeHighlight: "#FF6B81"
+            }},
+            noche2: {{
+                name: "Noche · Grafito / Índigo / Cobre Vivo",
+                bgGrafo: "#15171B", panelBg: "rgba(34, 38, 44, 0.95)", panelBorder: "#3A4048",
+                textGen: "#F3F4F6", textCtrl: "#F3F4F6", ctrlBg: "#1A1D22", ctrlBorder: "#3A4048",
+                btnBg: "#FF6E67", btnHover: "#FF8882",
+                bono: {{ bg: "#6E7EE6", border: "#AAB4FF", text: "#F5F7FF" }},
+                empresa: {{ bg: "#2FA394", border: "#72D6C7", text: "#F1FFFC" }},
+                beneficiario: {{ bg: "#C9853E", border: "#F1BA72", text: "#FFF6E8" }},
+                edgeNormal: "#6E7682", edgeText: "#D5DBE3", edgeHighlight: "#FF6E67"
+            }}
+        }};
+
+        var currentThemeKey = localStorage.getItem('selectedTheme') || 'dia1';
         var originalNodes = [];
         var originalEdges = [];
         var initialPositions = {{}};
         var currentIsolatedValue = null;
         var currentIsolatedType = null;
 
-        // PARSER DE TOOLTIP HTML PARA EVITAR MOSTRAR ETIQUETAS BR / B
+        // 1. REPROCESAR TEMA Y COLORIMETRÍA DINÁMICA
+        function applyThemeStyles(themeKey) {{
+            var t = THEMES[themeKey] || THEMES.dia1;
+            currentThemeKey = themeKey;
+            localStorage.setItem('selectedTheme', themeKey);
+
+            // Estilos del DOM y Panel
+            document.body.style.backgroundColor = t.bgGrafo;
+            var panel = document.getElementById('filter-panel');
+            panel.style.backgroundColor = t.panelBg;
+            panel.style.borderColor = t.panelBorder;
+            panel.style.color = t.textCtrl;
+
+            var selects = panel.querySelectorAll('select');
+            selects.forEach(function(s) {{
+                s.style.backgroundColor = t.ctrlBg;
+                s.style.color = t.textCtrl;
+                s.style.borderColor = t.ctrlBorder;
+            }});
+
+            var btn = document.getElementById('btn-reset');
+            btn.style.backgroundColor = t.btnBg;
+
+            // Actualizar Lienzo de Vis.js
+            network.setOptions({{
+                nodes: {{
+                    font: {{ face: 'Arial' }}
+                }},
+                edges: {{
+                    font: {{ color: t.edgeText, strokeWidth: 3, strokeColor: t.bgGrafo }}
+                }}
+            }});
+
+            // Refrescar nodos con la nueva paleta
+            var nodeUpdates = originalNodes.map(function(n) {{
+                var groupTheme = t[n.group] || t.bono;
+                var isSelected = (currentIsolatedValue && (n.id === currentIsolatedValue || (currentIsolatedType === 'bono' && n.id === currentIsolatedValue)));
+                return {{
+                    id: n.id,
+                    color: {{
+                        background: groupTheme.bg,
+                        border: isSelected ? t.edgeHighlight : groupTheme.border,
+                        highlight: {{ background: groupTheme.bg, border: t.edgeHighlight }}
+                    }},
+                    borderWidth: isSelected ? 3 : 1.5,
+                    font: {{ color: groupTheme.text, face: 'Arial' }}
+                }};
+            }});
+            nodes.update(nodeUpdates);
+
+            // Refrescar aristas con la nueva paleta
+            var edgeUpdates = originalEdges.map(function(e) {{
+                return {{
+                    id: e.id,
+                    color: {{ color: t.edgeNormal, highlight: t.edgeHighlight }},
+                    font: {{ color: t.edgeText, strokeWidth: 3, strokeColor: t.bgGrafo }}
+                }};
+            }});
+            edges.update(edgeUpdates);
+        }}
+
+        function changeTheme(themeKey) {{
+            applyThemeStyles(themeKey);
+            // Si hay un filtro activo, reaplicar resalte con el nuevo color cromático
+            if (currentIsolatedValue) {{
+                applyIsolationFilter(currentIsolatedValue, currentIsolatedType);
+            }}
+        }}
+
+        // PARSER DE TOOLTIP EN TARJETA CROMÁTICA
         network.once("beforeDrawing", function() {{
             var allNodes = nodes.get();
             var updates = [];
-
             allNodes.forEach(function(node) {{
                 if (node.title && typeof node.title === 'string') {{
                     var container = document.createElement('div');
@@ -399,13 +495,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     updates.push({{ id: node.id, title: container }});
                 }}
             }});
-
-            if (updates.length > 0) {{
-                nodes.update(updates);
-            }}
+            if (updates.length > 0) {{ nodes.update(updates); }}
         }});
 
-        // 1. REGISTRO FÍSICO INICIAL Y COORDENADAS
+        // REGISTRO DE POSICIONES FÍSICAS E INICIALIZACIÓN
         network.once("stabilizationIterationsDone", function() {{
             network.setOptions({{ physics: {{ enabled: false }} }});
             var allIds = nodes.getIds();
@@ -418,9 +511,33 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         network.once("afterDrawing", function () {{
             originalNodes = JSON.parse(JSON.stringify(nodes.get()));
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
+            
+            // Cargar selector de tema guardado
+            document.getElementById('sel-theme').value = currentThemeKey;
+            applyThemeStyles(currentThemeKey);
         }});
 
-        // RE-POBLAR SELECTORES HTML EN FUNCIÓN DEL FILTRO ACTIVO
+        // BÚSQUEDA RÁPIDA EN SELECTOR (JUMP ON TYPING)
+        document.querySelectorAll('.searchable-select').forEach(function(select) {{
+            var searchStr = "";
+            var searchTimeout;
+            select.addEventListener('keydown', function(e) {{
+                if (e.key.length === 1) {{
+                    searchStr += e.key.toLowerCase();
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(function() {{ searchStr = ""; }}, 1000);
+
+                    for (var i = 0; i < select.options.length; i++) {{
+                        if (select.options[i].text.toLowerCase().includes(searchStr)) {{
+                            select.selectedIndex = i;
+                            select.dispatchEvent(new Event('change'));
+                            break;
+                        }}
+                    }}
+                }}
+            }});
+        }});
+
         function updateSelectDropdowns(validNodeIds) {{
             var selBono = document.getElementById('sel-bono');
             var selEndo = document.getElementById('sel-endosatario');
@@ -430,9 +547,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var valEndo = selEndo.value;
             var valBene = selBene.value;
 
-            var bonosList = [];
-            var endoList = [];
-            var beneList = [];
+            var bonosList = []; var endoList = []; var beneList = [];
 
             originalNodes.forEach(function(n) {{
                 if (!validNodeIds || validNodeIds.has(n.id)) {{
@@ -453,10 +568,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             selBene.value = beneList.includes(valBene) ? valBene : "";
         }}
 
-        // 2. FILTRO INDEPENDIENTE Y CASCADA DE CANTIDAD DE ENDOSOS
+        // FILTRO POR CANTIDAD DE ENDOSOS
         function filterByEndosos(minCount) {{
             minCount = parseInt(minCount, 10);
-            
             currentIsolatedValue = null;
             currentIsolatedType = null;
 
@@ -480,8 +594,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             updateSelectDropdowns(validNodeIds);
         }}
 
-        // 3. AISLAMIENTO EXCLUSIVO DE NODOS
+        // AISLAMIENTO EXCLUSIVO DE RUTAS CON COLOR DEL TEMA ACTIVO
         function applyIsolationFilter(selectedValue, type) {{
+            var t = THEMES[currentThemeKey] || THEMES.dia1;
+
             if (type !== 'bono') document.getElementById('sel-bono').value = "";
             if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
@@ -521,20 +637,35 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
 
-            nodes.update(originalNodes.map(n => ({{
-                id: n.id,
-                hidden: !activeNodes.has(n.id)
-            }})));
+            // Ocultar no relacionados y bordear activos con color de destaque del tema
+            nodes.update(originalNodes.map(n => {{
+                var isActive = activeNodes.has(n.id);
+                var groupTheme = t[n.group] || t.bono;
+                return {{
+                    id: n.id,
+                    hidden: !isActive,
+                    borderWidth: isActive ? 3 : 1.5,
+                    color: {{
+                        background: groupTheme.bg,
+                        border: isActive ? t.edgeHighlight : groupTheme.border
+                    }}
+                }};
+            }}));
 
-            edges.update(originalEdges.map(e => ({{
-                id: e.id,
-                hidden: !activeEdges.has(e.id) || (minCount > 0 && e.cantEndosos < minCount)
-            }})));
+            edges.update(originalEdges.map(e => {{
+                var isActive = activeEdges.has(e.id);
+                return {{
+                    id: e.id,
+                    hidden: !isActive || (minCount > 0 && e.cantEndosos < minCount),
+                    width: isActive ? 3.8 : 1.5,
+                    color: {{ color: isActive ? t.edgeHighlight : t.edgeNormal }}
+                }};
+            }}));
 
             network.fit({{ nodes: Array.from(activeNodes), animation: {{ duration: 600 }} }});
         }}
 
-        // 4. INTERACCIÓN AL HACER CLIC EN UN NODO O ARISTA
+        // INTERACCIÓN POR CLIC EN ELEMENTOS
         network.on("click", function (params) {{
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
@@ -573,13 +704,14 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }}
         }});
 
-        // 5. RESTABLECER POSICIONES Y ESTADO COMPLETO
+        // RESTABLECER ESTADO ORIGINAL DE LA RED
         function resetZoom() {{
             document.getElementById('sel-min-endosos').value = "0";
             currentIsolatedValue = null;
             currentIsolatedType = null;
 
             updateSelectDropdowns(null);
+            applyThemeStyles(currentThemeKey);
 
             var nodeUpdates = [];
             for (var nodeId in initialPositions) {{
@@ -603,6 +735,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
+
 
 if __name__ == "__main__":
     main()
