@@ -15,7 +15,7 @@ def normalizar_texto(val):
         return ""
     texto = unicodedata.normalize('NFD', texto)
     texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn').upper()
-    texto = re.sub(r'\b(LIMITADA\.|LIMITADA|LTDA\.|LTDA)\b', 'LTDA', texto)
+    texto = re.sub(r'\b(LIMITADA\.|LTAS|ltas|LIMITADA|LTDA\.|LTDA)\b', 'LTDA', texto)
     texto = re.sub(r'\b(S\.A\.|S\.A)\b', 'SA', texto)
     texto = re.sub(r'\b(S\.P\.A\.|S\.P\.A|SPA\.)\b', 'SPA', texto)
     texto = re.sub(r'\.', '', texto)
