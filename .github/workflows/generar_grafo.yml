@@ -5,25 +5,19 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
-# 1. PERMISOS DECLARADOS A NIVEL GLOBAL
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# 2. GESTIÓN DE CONCURRENCIA PARA EVITAR CHOQUES DE DESPLIEGUE
-concurrency:
-  group: "pages"
-  cancel-in-progress: true
-
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
-    # 3. ASIGNACIÓN DEL ENTORNO DE GITHUB PAGES
+    # Definir el entorno evita que deploy-pages@v4 se quede en "updating_pages" infinito
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
 
     steps:
       - name: Checkout del repositorio
