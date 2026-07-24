@@ -224,7 +224,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
-    print(f"✅ Grafo con vista fidedigna y física congelada en: {output_path}")
+    print(f"✅ Grafo procesado con función Toggle de resaltado en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
@@ -327,8 +327,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     <script>
         var originalNodes = [];
         var originalEdges = [];
+        var currentHighlightedValue = null;
+        var currentHighlightedType = null;
 
-        // CONGELAR FÍSICA UNA VEZ ESTABILIZADO EL MAPA
         network.once("stabilizationIterationsDone", function() {{
             network.setOptions({{ physics: {{ enabled: false }} }});
         }});
@@ -340,6 +341,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
         function filterByEndosos(minCount) {{
             minCount = parseInt(minCount, 10);
+
+            clearHighlightState();
 
             document.getElementById('sel-bono').value = "";
             document.getElementById('sel-endosatario').value = "";
@@ -385,43 +388,98 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 var selectedNodeId = params.nodes[0];
                 var clickedNode = nodes.get(selectedNodeId);
 
-                if (clickedNode && clickedNode.group === 'bono') {{
-                    document.getElementById('sel-bono').value = selectedNodeId;
-                    highlightPath(selectedNodeId, 'bono');
-                }} else if (clickedNode && clickedNode.group === 'endosatario') {{
-                    document.getElementById('sel-endosatario').value = selectedNodeId;
-                    highlightPath(selectedNodeId, 'endosatario');
-                }} else if (clickedNode && clickedNode.group === 'beneficiario') {{
-                    document.getElementById('sel-beneficiario').value = selectedNodeId;
-                    highlightPath(selectedNodeId, 'beneficiario');
+                if (clickedNode) {{
+                    var type = clickedNode.group;
+                    
+                    // TOGGLE: Si se vuelve a presionar el mismo nodo, se deselecciona
+                    if (currentHighlightedValue === selectedNodeId && currentHighlightedType === type) {{
+                        clearHighlightState();
+                        return;
+                    }}
+
+                    if (type === 'bono') document.getElementById('sel-bono').value = selectedNodeId;
+                    else if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedNodeId;
+                    else if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedNodeId;
+
+                    highlightPath(selectedNodeId, type);
                 }}
             }} else if (params.edges.length > 0) {{
                 var edgeId = params.edges[0];
                 var clickedEdge = edges.get(edgeId);
 
                 if (clickedEdge && clickedEdge.bono) {{
-                    document.getElementById('sel-bono').value = clickedEdge.bono;
-                    highlightPath(clickedEdge.bono, 'bono');
+                    var bonoId = clickedEdge.bono;
+
+                    // TOGGLE PARA ARISTAS
+                    if (currentHighlightedValue === bonoId && currentHighlightedType === 'bono') {{
+                        clearHighlightState();
+                        return;
+                    }}
+
+                    document.getElementById('sel-bono').value = bonoId;
+                    highlightPath(bonoId, 'bono');
                 }}
+            }} else {{
+                // Clic en el fondo deselecciona
+                clearHighlightState();
             }}
         }});
 
+        function clearHighlightState() {{
+            currentHighlightedValue = null;
+            currentHighlightedType = null;
+
+            document.getElementById('sel-bono').value = "";
+            document.getElementById('sel-endosatario').value = "";
+            document.getElementById('sel-beneficiario').value = "";
+
+            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+
+            // Restaurar bordes y colores base respetando el filtro de endosos activo
+            var updateEdges = originalEdges.map(function(edge) {{
+                return {{
+                    id: edge.id,
+                    color: {{ color: '#B9B4AE', highlight: '#C65A72' }},
+                    width: 1.5,
+                    hidden: minCount > 0 ? edge.cantEndosos < minCount : false
+                }};
+            }});
+            edges.update(updateEdges);
+
+            var validNodeIds = new Set();
+            if (minCount > 0) {{
+                originalEdges.filter(e => e.cantEndosos >= minCount).forEach(e => {{
+                    validNodeIds.add(e.from);
+                    validNodeIds.add(e.to);
+                }});
+            }}
+
+            var updateNodes = originalNodes.map(function(node) {{
+                return {{
+                    id: node.id,
+                    color: node.color,
+                    borderWidth: 1,
+                    hidden: minCount > 0 ? !validNodeIds.has(node.id) : false
+                }};
+            }});
+            nodes.update(updateNodes);
+        }}
+
         function highlightPath(selectedValue, type) {{
             if (!selectedValue) {{
+                clearHighlightState();
                 return;
             }}
 
-            if (type !== 'bono') document.getElementById('sel-bono').value = "";
-            if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
-            if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
+            // Limpiar estado anterior para evitar superposición de resaltados
+            clearHighlightState();
 
-            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
-            if (minCount > 0) {{
-                filterByEndosos(minCount);
-            }} else {{
-                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
-                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
-            }}
+            currentHighlightedValue = selectedValue;
+            currentHighlightedType = type;
+
+            if (type === 'bono') document.getElementById('sel-bono').value = selectedValue;
+            if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedValue;
+            if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedValue;
 
             var activeBonos = new Set();
             var activeNodes = new Set();
@@ -474,15 +532,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
         function resetZoom() {{
             document.getElementById('sel-min-endosos').value = "0";
-            document.getElementById('sel-bono').value = "";
-            document.getElementById('sel-endosatario').value = "";
-            document.getElementById('sel-beneficiario').value = "";
-
-            if (originalNodes.length > 0 && originalEdges.length > 0) {{
-                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false, borderWidth: undefined }})));
-                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false, width: e.width, color: e.color }})));
-            }}
-
+            clearHighlightState();
             network.fit({{ animation: {{ duration: 800 }} }});
             network.unselectAll();
         }}
