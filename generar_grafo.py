@@ -41,7 +41,7 @@ def main():
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    print("➡️ Procesando datos y etiquetando rutas específicas por bono...")
+    print("➡️ Procesando datos aplicando estética Salvia / Terracota / Crema...")
     
     bonos_set = set()
     endosatarios_set = set()
@@ -53,11 +53,12 @@ def main():
         width="100%", 
         directed=True, 
         notebook=False, 
-        bgcolor="#f8f9fa", 
-        font_color="#333333"
+        bgcolor="#faf9f6", 
+        font_color="#2b2b2b"
     )
     
-    net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=120)
+    # Física y curva para evitar superposición en idas y vueltas
+    net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=140)
 
     for _, row in df.iterrows():
         cepia_id = normalizar_texto(row.get('N° Cepia', ''))
@@ -70,32 +71,32 @@ def main():
         if beneficiario_id:
             beneficiarios_set.add(beneficiario_id)
 
-        # 1. NODO PRINCIPAL: Bono / N° Cepia (grupo 'bono')
+        # 1. NODO ORIGEN: Bono / N° Cepia (Salvia #A8BFA8 - Redondo)
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
             title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
-            color="#005f73", 
+            color={"background": "#A8BFA8", "border": "#7F9A7F"}, 
             shape="dot", 
             size=28,
             group="bono",
-            font={"size": 14, "face": "arial", "bold": True}
+            font={"size": 13, "face": "arial", "bold": True, "color": "#1C2B1C"}
         )
 
-        # 2. NODO FINAL: Beneficiario
+        # 2. NODO FINAL: Beneficiario (Arena/Crema #F0D9A7 - Cuadrado)
         if beneficiario_id:
             net.add_node(
                 beneficiario_id, 
                 label=f"Beneficiario:\n{beneficiario_id}", 
                 title=f"<b>Beneficiario:</b> {beneficiario_id}", 
-                color="#2a9d8f", 
-                shape="square", 
-                size=20,
+                color={"background": "#F0D9A7", "border": "#D8B775"}, 
+                shape="box", 
+                size=22,
                 group="beneficiario",
-                font={"size": 11, "face": "arial"}
+                font={"size": 11, "face": "arial", "color": "#3D3015"}
             )
 
-        # 3. CADENA DE ENDOSATARIOS DINÁMICOS
+        # 3. ENDOSATARIOS INTERMEDIOS (Terracota Suave #D8A48F - Cuadrado)
         nodo_actual = cepia_id
         i = 1
         num_endosos = 0
@@ -118,24 +119,27 @@ def main():
                     endosatario_id, 
                     label=f"{endosatario_id}", 
                     title=f"<b>Endosatario:</b> {endosatario_id}", 
-                    color="#ee9b00", 
-                    shape="ellipse",
-                    size=18,
+                    color={"background": "#D8A48F", "border": "#B87E67"}, 
+                    shape="box",
+                    size=20,
                     group="endosatario",
-                    font={"size": 11, "face": "arial"}
+                    font={"size": 11, "face": "arial", "color": "#3B1E13"}
                 )
                 
-                label_arista = f"Endoso {i}: {fecha_val}" if fecha_val else f"Endoso {i}"
+                label_arista = f"Endoso {i}\n{fecha_val}" if fecha_val else f"Endoso {i}"
                 
+                # Arista con curva dinámica para distinguir idas y vueltas claramente
                 net.add_edge(
                     nodo_actual, 
                     endosatario_id, 
                     label=label_arista, 
                     title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
-                    color="#ca6702",
+                    color={"color": "#B9B4AE", "highlight": "#C65A72"},
                     width=2,
                     bono=cepia_id,
-                    font={"size": 9, "align": "top"}
+                    arrows={"to": {"enabled": True, "scaleFactor": 1.1}},
+                    smooth={"type": "curvedCW", "roundness": 0.2},
+                    font={"size": 9, "align": "middle", "color": "#555555"}
                 )
                 
                 nodo_actual = endosatario_id
@@ -143,16 +147,20 @@ def main():
 
         cant_endosos_set.add(num_endosos)
 
+        # Conexión punteada final hacia el Beneficiario
         if beneficiario_id:
             net.add_edge(
                 nodo_actual, 
                 beneficiario_id, 
                 label="Asignado a", 
                 title=f"Bono: {cepia_id} | Registro de Beneficiario", 
-                color="#94d2bd", 
+                color={"color": "#B9B4AE", "highlight": "#C65A72"}, 
                 width=2,
                 dashes=True,
-                bono=cepia_id
+                bono=cepia_id,
+                arrows={"to": {"enabled": True, "scaleFactor": 1.1}},
+                smooth={"type": "curvedCW", "roundness": 0.15},
+                font={"size": 9, "align": "middle", "color": "#555555"}
             )
 
     os.makedirs("docs", exist_ok=True)
@@ -160,7 +168,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo con interacción de clics en nodos/aristas generado en: {output_path}")
+    print(f"✅ Grafo adaptado a paleta Salvia/Terracota/Crema listo en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
@@ -178,10 +186,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             top: 10px;
             left: 10px;
             z-index: 1000;
-            background: rgba(255, 255, 255, 0.95);
+            background: rgba(250, 249, 246, 0.95);
             padding: 12px 16px;
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border: 1px solid #e0dad3;
             font-family: Arial, sans-serif;
             font-size: 13px;
             display: flex;
@@ -205,7 +214,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             font-size: 12px;
         }}
         #filter-panel button {{
-            background-color: #005f73;
+            background-color: #C65A72;
             color: white;
             border: none;
             cursor: pointer;
@@ -213,7 +222,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             margin-top: 16px;
         }}
         #filter-panel button:hover {{
-            background-color: #0a9396;
+            background-color: #A8455B;
         }}
     </style>
 
@@ -251,13 +260,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
-        // --- EVENTOS DE CLIC DIRECTO EN EL GRÁFICO ---
         network.on("selectNode", function (params) {{
             if (params.nodes.length > 0) {{
                 var selectedNodeId = params.nodes[0];
                 var clickedNode = nodes.get(selectedNodeId);
 
-                // Si se hace clic en un nodo de tipo Bono
                 if (clickedNode && clickedNode.group === 'bono') {{
                     document.getElementById('sel-bono').value = selectedNodeId;
                     highlightPath(selectedNodeId, 'bono');
@@ -272,7 +279,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
         }});
 
         network.on("selectEdge", function (params) {{
-            // Solo si se hizo clic en una arista y NO en un nodo simultáneamente
             if (params.nodes.length === 0 && params.edges.length > 0) {{
                 var edgeId = params.edges[0];
                 var clickedEdge = edges.get(edgeId);
@@ -302,12 +308,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                 return;
             }}
 
-            // Sincronizar selectores
             if (type !== 'bono') document.getElementById('sel-bono').value = "";
             if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
 
-            // Restaurar estado base
             nodes.update(originalNodes);
             edges.update(originalEdges);
 
@@ -333,28 +337,34 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                 }}
             }});
 
-            // Resaltar aristas activas
+            // Resaltar aristas en tono Rosa Destacado (#C65A72) con ancho 4px
             var updateEdges = [];
             activeEdges.forEach(function(edgeId) {{
                 updateEdges.push({{
                     id: edgeId,
-                    color: {{ color: '#d90429', highlight: '#d90429' }},
-                    width: 5
+                    color: {{ color: '#C65A72', highlight: '#C65A72' }},
+                    width: 4
                 }});
             }});
             edges.update(updateEdges);
 
-            // Resaltar nodos activos
+            // Destacar los nodos participantes bordeándolos en #C65A72
             var updateNodes = [];
             activeNodes.forEach(function(nodeId) {{
-                updateNodes.push({{
-                    id: nodeId,
-                    color: {{ background: '#ffb703', border: '#d90429' }}
-                }});
+                var baseNode = originalNodes.find(n => n.id === nodeId);
+                if (baseNode) {{
+                    updateNodes.push({{
+                        id: nodeId,
+                        color: {{
+                            background: baseNode.color.background,
+                            border: '#C65A72'
+                        }},
+                        borderWidth: 3
+                    }});
+                }}
             }});
             nodes.update(updateNodes);
 
-            // Centrar cámara
             if (type === 'bono' && activeNodes.size > 0) {{
                 network.fit({{
                     nodes: Array.from(activeNodes),
