@@ -21,7 +21,7 @@ def normalizar_texto(val):
     texto = re.sub(r'\.', '', texto)
     return " ".join(texto.split())
 
-def acortar_texto(texto, max_len=22):
+def acortar_texto(texto, max_len=14):
     if len(texto) > max_len:
         return texto[:max_len] + "..."
     return texto
@@ -46,7 +46,7 @@ def main():
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    print("➡️ Procesando datos y forzando paleta Salvia / Terracota / Crema...")
+    print("➡️ Procesando datos con alta dispersión de nodos...")
     
     bonos_set = set()
     endosatarios_set = set()
@@ -54,7 +54,7 @@ def main():
     cant_endosos_set = set()
 
     net = Network(
-        height="750px", 
+        height="850px", 
         width="100%", 
         directed=True, 
         notebook=False, 
@@ -62,7 +62,7 @@ def main():
         font_color="#2B2B2B"
     )
     
-    # 1. OPCIONES GLOBALES DE INTERACCIÓN Y GRUPOS (Corrige colores y arrastre pegajoso)
+    # FÍSICA EXPANSIVA: Fuerza a que el grafo se extienda ampliamente
     net.set_options("""
     {
       "interaction": {
@@ -74,10 +74,16 @@ def main():
       },
       "physics": {
         "barnesHut": {
-          "gravitationalConstant": -3000,
-          "centralGravity": 0.3,
-          "springLength": 140
-        }
+          "gravitationalConstant": -12000,
+          "centralGravity": 0.15,
+          "springLength": 260,
+          "springConstant": 0.02,
+          "damping": 0.09,
+          "avoidOverlap": 1
+        },
+        "maxVelocity": 50,
+        "minVelocity": 0.75,
+        "solver": "barnesHut"
       },
       "groups": {
         "bono": {
@@ -107,29 +113,29 @@ def main():
         if beneficiario_id:
             beneficiarios_set.add(beneficiario_id)
 
-        # 2. NODO ORIGEN: Bono / N° Cepia (Salvia #A8BFA8)
+        # 1. NODO ORIGEN: Bono / N° Cepia (Salvia #A8BFA8)
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
             title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
             group="bono",
-            size=26,
-            font={"size": 13, "face": "arial", "bold": True, "color": "#1C2B1C"}
+            size=22,
+            font={"size": 11, "face": "arial", "bold": True, "color": "#1C2B1C"}
         )
 
-        # 3. NODO FINAL: Beneficiario (Crema #F0D9A7 - Círculo reducido)
+        # 2. NODO FINAL: Beneficiario (Crema #F0D9A7)
         if beneficiario_id:
-            label_benef = acortar_texto(beneficiario_id, 20)
+            label_benef = acortar_texto(beneficiario_id, 12)
             net.add_node(
                 beneficiario_id, 
-                label=f"Benef:\n{label_benef}", 
+                label=label_benef, 
                 title=f"<b>Beneficiario Completo:</b><br>{beneficiario_id}", 
                 group="beneficiario",
-                size=18,
-                font={"size": 10, "face": "arial", "color": "#3D3015"}
+                size=14,
+                font={"size": 9, "face": "arial", "color": "#3D3015"}
             )
 
-        # 4. ENDOSATARIOS INTERMEDIOS (Terracota #D8A48F - Rectángulo)
+        # 3. ENDOSATARIOS INTERMEDIOS (Terracota #D8A48F)
         nodo_actual = cepia_id
         i = 1
         num_endosos = 0
@@ -148,17 +154,18 @@ def main():
                 num_endosos += 1
                 endosatarios_set.add(endosatario_id)
 
-                label_endo = acortar_texto(endosatario_id, 22)
+                label_endo = acortar_texto(endosatario_id, 14)
                 net.add_node(
                     endosatario_id, 
                     label=label_endo, 
                     title=f"<b>Endosatario Completo:</b><br>{endosatario_id}", 
                     group="endosatario",
-                    size=16,
-                    font={"size": 10, "face": "arial", "color": "#3B1E13"}
+                    shape="box",
+                    widthConstraint={"maximum": 110},
+                    font={"size": 9, "face": "arial", "color": "#3B1E13"}
                 )
                 
-                label_arista = f"Endoso {i}\n{fecha_val}" if fecha_val else f"Endoso {i}"
+                label_arista = f"E{i}: {fecha_val}" if fecha_val else f"Endoso {i}"
                 
                 net.add_edge(
                     nodo_actual, 
@@ -166,11 +173,11 @@ def main():
                     label=label_arista, 
                     title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
                     color={"color": "#B9B4AE", "highlight": "#C65A72"},
-                    width=2,
+                    width=1.5,
                     bono=cepia_id,
-                    arrows={"to": {"enabled": True, "scaleFactor": 1.1}},
-                    smooth={"type": "curvedCW", "roundness": 0.2},
-                    font={"size": 8, "align": "middle", "color": "#666666"}
+                    arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
+                    smooth={"type": "curvedCW", "roundness": 0.25},
+                    font={"size": 8, "align": "middle", "color": "#777777"}
                 )
                 
                 nodo_actual = endosatario_id
@@ -185,12 +192,12 @@ def main():
                 label="Asignado a", 
                 title=f"Bono: {cepia_id} | Registro de Beneficiario", 
                 color={"color": "#B9B4AE", "highlight": "#C65A72"}, 
-                width=2,
+                width=1.5,
                 dashes=True,
                 bono=cepia_id,
-                arrows={"to": {"enabled": True, "scaleFactor": 1.1}},
-                smooth={"type": "curvedCW", "roundness": 0.15},
-                font={"size": 8, "align": "middle", "color": "#666666"}
+                arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
+                smooth={"type": "curvedCW", "roundness": 0.2},
+                font={"size": 8, "align": "middle", "color": "#777777"}
             )
 
     os.makedirs("docs", exist_ok=True)
@@ -198,7 +205,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo corregido e impreso en: {output_path}")
+    print(f"✅ Grafo procesado con amplia separación espacial en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
@@ -297,9 +304,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
-        // INTERACCIÓN DE CLIC LIMPIA (Evita retención/pegado de drag)
         network.on("click", function (params) {{
-            // Deseleccionar automáticamente para evitar que el nodo quede "fijo" o enganchado al cursor
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
             if (params.nodes.length > 0) {{
@@ -364,7 +369,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                 }}
             }});
 
-            // Resaltado de trazo con carmín #C65A72
             var updateEdges = [];
             activeEdges.forEach(function(edgeId) {{
                 updateEdges.push({{
@@ -375,7 +379,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             }});
             edges.update(updateEdges);
 
-            // Borde grueso en nodos activos
             var updateNodes = [];
             activeNodes.forEach(function(nodeId) {{
                 var baseNode = originalNodes.find(n => n.id === nodeId);
