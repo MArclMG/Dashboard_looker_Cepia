@@ -21,8 +21,7 @@ def normalizar_texto(val):
     texto = re.sub(r'\.', '', texto)
     return " ".join(texto.split())
 
-def acortar_texto(texto, max_len=25):
-    """Acorta nombres muy largos para evitar saturación visual en el lienzo."""
+def acortar_texto(texto, max_len=22):
     if len(texto) > max_len:
         return texto[:max_len] + "..."
     return texto
@@ -47,7 +46,7 @@ def main():
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    print("➡️ Procesando datos con paleta Salvia / Terracota / Crema...")
+    print("➡️ Procesando datos y forzando paleta Salvia / Terracota / Crema...")
     
     bonos_set = set()
     endosatarios_set = set()
@@ -63,8 +62,39 @@ def main():
         font_color="#2B2B2B"
     )
     
-    # Configuración de física y curvas dinámicas
-    net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=140)
+    # 1. OPCIONES GLOBALES DE INTERACCIÓN Y GRUPOS (Corrige colores y arrastre pegajoso)
+    net.set_options("""
+    {
+      "interaction": {
+        "hover": true,
+        "dragNodes": true,
+        "dragView": true,
+        "selectable": true,
+        "multiselect": false
+      },
+      "physics": {
+        "barnesHut": {
+          "gravitationalConstant": -3000,
+          "centralGravity": 0.3,
+          "springLength": 140
+        }
+      },
+      "groups": {
+        "bono": {
+          "color": {"background": "#A8BFA8", "border": "#7F9A7F", "highlight": {"background": "#A8BFA8", "border": "#C65A72"}},
+          "shape": "dot"
+        },
+        "endosatario": {
+          "color": {"background": "#D8A48F", "border": "#B87E67", "highlight": {"background": "#D8A48F", "border": "#C65A72"}},
+          "shape": "box"
+        },
+        "beneficiario": {
+          "color": {"background": "#F0D9A7", "border": "#D8B775", "highlight": {"background": "#F0D9A7", "border": "#C65A72"}},
+          "shape": "dot"
+        }
+      }
+    }
+    """)
 
     for _, row in df.iterrows():
         cepia_id = normalizar_texto(row.get('N° Cepia', ''))
@@ -77,33 +107,29 @@ def main():
         if beneficiario_id:
             beneficiarios_set.add(beneficiario_id)
 
-        # 1. NODO ORIGEN: Bono / N° Cepia (Salvia #A8BFA8 - Círculo grande)
+        # 2. NODO ORIGEN: Bono / N° Cepia (Salvia #A8BFA8)
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
             title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
-            color={"background": "#A8BFA8", "border": "#7F9A7F"}, 
-            shape="dot", 
-            size=26,
             group="bono",
+            size=26,
             font={"size": 13, "face": "arial", "bold": True, "color": "#1C2B1C"}
         )
 
-        # 2. NODO FINAL: Beneficiario (Crema #F0D9A7 - Círculo compacto)
+        # 3. NODO FINAL: Beneficiario (Crema #F0D9A7 - Círculo reducido)
         if beneficiario_id:
             label_benef = acortar_texto(beneficiario_id, 20)
             net.add_node(
                 beneficiario_id, 
                 label=f"Benef:\n{label_benef}", 
                 title=f"<b>Beneficiario Completo:</b><br>{beneficiario_id}", 
-                color={"background": "#F0D9A7", "border": "#D8B775"}, 
-                shape="dot", 
-                size=18,
                 group="beneficiario",
+                size=18,
                 font={"size": 10, "face": "arial", "color": "#3D3015"}
             )
 
-        # 3. ENDOSATARIOS INTERMEDIOS (Terracota Suave #D8A48F - Rectángulo suave)
+        # 4. ENDOSATARIOS INTERMEDIOS (Terracota #D8A48F - Rectángulo)
         nodo_actual = cepia_id
         i = 1
         num_endosos = 0
@@ -127,16 +153,13 @@ def main():
                     endosatario_id, 
                     label=label_endo, 
                     title=f"<b>Endosatario Completo:</b><br>{endosatario_id}", 
-                    color={"background": "#D8A48F", "border": "#B87E67"}, 
-                    shape="box",
-                    size=16,
                     group="endosatario",
+                    size=16,
                     font={"size": 10, "face": "arial", "color": "#3B1E13"}
                 )
                 
                 label_arista = f"Endoso {i}\n{fecha_val}" if fecha_val else f"Endoso {i}"
                 
-                # Arista en gris base #B9B4AE con curva para direccionalidad
                 net.add_edge(
                     nodo_actual, 
                     endosatario_id, 
@@ -155,7 +178,6 @@ def main():
 
         cant_endosos_set.add(num_endosos)
 
-        # Conexión punteada final hacia el Beneficiario
         if beneficiario_id:
             net.add_edge(
                 nodo_actual, 
@@ -176,14 +198,13 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo actualizado con estética Salvia/Terracota/Crema listo en: {output_path}")
+    print(f"✅ Grafo corregido e impreso en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
     with open(html_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # Inyección de metatags anti-caché en el head
     meta_cache = """
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
@@ -276,8 +297,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
-        // --- MANEJO DE EVENTO CLIC (Mantiene Drag & Drop nativo al arrastrar) ---
+        // INTERACCIÓN DE CLIC LIMPIA (Evita retención/pegado de drag)
         network.on("click", function (params) {{
+            // Deseleccionar automáticamente para evitar que el nodo quede "fijo" o enganchado al cursor
+            setTimeout(function() {{ network.unselectAll(); }}, 50);
+
             if (params.nodes.length > 0) {{
                 var selectedNodeId = params.nodes[0];
                 var clickedNode = nodes.get(selectedNodeId);
@@ -340,7 +364,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                 }}
             }});
 
-            // Resaltado de ruta en Rosa Destacado (#C65A72)
+            // Resaltado de trazo con carmín #C65A72
             var updateEdges = [];
             activeEdges.forEach(function(edgeId) {{
                 updateEdges.push({{
@@ -351,7 +375,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             }});
             edges.update(updateEdges);
 
-            // Resaltado de bordes de nodos participantes
+            // Borde grueso en nodos activos
             var updateNodes = [];
             activeNodes.forEach(function(nodeId) {{
                 var baseNode = originalNodes.find(n => n.id === nodeId);
@@ -359,7 +383,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                     updateNodes.push({{
                         id: nodeId,
                         color: {{
-                            background: baseNode.color.background,
+                            background: baseNode.color ? baseNode.color.background : undefined,
                             border: '#C65A72'
                         }},
                         borderWidth: 3
@@ -392,6 +416,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             }}
 
             network.fit({{ animation: {{ duration: 800 }} }});
+            network.unselectAll();
         }}
     </script>
     """
