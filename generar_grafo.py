@@ -46,12 +46,12 @@ def main():
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
-    print("➡️ Procesando datos con alta dispersión de nodos...")
+    print("➡️ Procesando datos e indexando número de endosos por bono...")
     
     bonos_set = set()
     endosatarios_set = set()
     beneficiarios_set = set()
-    cant_endosos_set = set()
+    max_endosos_encontrados = 0
 
     net = Network(
         height="850px", 
@@ -62,7 +62,7 @@ def main():
         font_color="#2B2B2B"
     )
     
-    # FÍSICA EXPANSIVA: Fuerza a que el grafo se extienda ampliamente
+    # FÍSICA EXPANSIVA
     net.set_options("""
     {
       "interaction": {
@@ -109,21 +109,37 @@ def main():
         if not cepia_id: 
             continue
 
+        # 1. CONTAR ENDOSOS REALES DEL BONO
+        i_temp = 1
+        num_endosos_bono = 0
+        while True:
+            col_check = next((c for c in df.columns if c.strip().lower() == f'endosatario_{i_temp}'), None)
+            if not col_check:
+                break
+            val_endo = normalizar_texto(row.get(col_check, ''))
+            if val_endo:
+                num_endosos_bono += 1
+            i_temp += 1
+
+        if num_endosos_bono > max_endosos_encontrados:
+            max_endosos_encontrados = num_endosos_bono
+
         bonos_set.add(cepia_id)
         if beneficiario_id:
             beneficiarios_set.add(beneficiario_id)
 
-        # 1. NODO ORIGEN: Bono / N° Cepia (Salvia #A8BFA8)
+        # NODO ORIGEN: Bono (Salvia #A8BFA8)
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
-            title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
+            title=f"<b>Bono (N° Cepia):</b> {cepia_id}<br><b>Endosos:</b> {num_endosos_bono}<br><b>Beneficiario Final:</b> {beneficiario_id}", 
             group="bono",
+            cantEndosos=num_endosos_bono,
             size=22,
             font={"size": 11, "face": "arial", "bold": True, "color": "#1C2B1C"}
         )
 
-        # 2. NODO FINAL: Beneficiario (Crema #F0D9A7)
+        # NODO FINAL: Beneficiario (Crema #F0D9A7)
         if beneficiario_id:
             label_benef = acortar_texto(beneficiario_id, 12)
             net.add_node(
@@ -135,10 +151,9 @@ def main():
                 font={"size": 9, "face": "arial", "color": "#3D3015"}
             )
 
-        # 3. ENDOSATARIOS INTERMEDIOS (Terracota #D8A48F)
+        # ENDOSATARIOS INTERMEDIOS (Terracota #D8A48F)
         nodo_actual = cepia_id
         i = 1
-        num_endosos = 0
         
         while True:
             col_endosatario = next((c for c in df.columns if c.strip().lower() == f'endosatario_{i}'), None)
@@ -151,7 +166,6 @@ def main():
             fecha_val = str(row.get(col_fecha, '')).strip() if col_fecha else ""
 
             if endosatario_id:
-                num_endosos += 1
                 endosatarios_set.add(endosatario_id)
 
                 label_endo = acortar_texto(endosatario_id, 14)
@@ -175,6 +189,7 @@ def main():
                     color={"color": "#B9B4AE", "highlight": "#C65A72"},
                     width=1.5,
                     bono=cepia_id,
+                    cantEndosos=num_endosos_bono,
                     arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
                     smooth={"type": "curvedCW", "roundness": 0.25},
                     font={"size": 8, "align": "middle", "color": "#777777"}
@@ -182,8 +197,6 @@ def main():
                 
                 nodo_actual = endosatario_id
             i += 1
-
-        cant_endosos_set.add(num_endosos)
 
         if beneficiario_id:
             net.add_edge(
@@ -195,6 +208,7 @@ def main():
                 width=1.5,
                 dashes=True,
                 bono=cepia_id,
+                cantEndosos=num_endosos_bono,
                 arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
                 smooth={"type": "curvedCW", "roundness": 0.2},
                 font={"size": 8, "align": "middle", "color": "#777777"}
@@ -204,11 +218,11 @@ def main():
     output_path = os.path.join("docs", "index.html")
     net.write_html(output_path)
 
-    inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo procesado con amplia separación espacial en: {output_path}")
+    inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
+    print(f"✅ Grafo con filtro dinámico por cantidad de endosos generado en: {output_path}")
 
 
-def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
+def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
     with open(html_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
@@ -222,6 +236,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
     opts_bonos = "".join([f'<option value="{b}">{b}</option>' for b in sorted(bonos)])
     opts_endosatarios = "".join([f'<option value="{e}">{e}</option>' for e in sorted(endosatarios)])
     opts_beneficiarios = "".join([f'<option value="{b}">{b}</option>' for b in sorted(beneficiarios)])
+
+    # Generar opciones dinámicas para Mínimo de Endosos (0, >=1, >=2, ..., >=N)
+    opts_num_endosos = '<option value="0">Todos (≥ 0)</option>'
+    for k in range(1, max_endosos + 1):
+        opts_num_endosos += f'<option value="{k}">Al menos {k} endoso{"s" if k > 1 else ""}</option>'
 
     panel_html = f"""
     <style>
@@ -271,6 +290,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
     </style>
 
     <div id="filter-panel">
+        <label>Min. Endosos:
+            <select id="sel-min-endosos" onchange="filterByEndosos(this.value)">
+                {opts_num_endosos}
+            </select>
+        </label>
+
         <label>Bono (N° Cepia):
             <select id="sel-bono" onchange="highlightPath(this.value, 'bono')">
                 <option value="">-- Todos --</option>
@@ -303,6 +328,53 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             originalNodes = JSON.parse(JSON.stringify(nodes.get()));
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
+
+        // FILTRADO POR CANTIDAD DE ENDOSOS
+        function filterByEndosos(minCount) {{
+            minCount = parseInt(minCount, 10);
+
+            // Restablecer selectores de entidades
+            document.getElementById('sel-bono').value = "";
+            document.getElementById('sel-endosatario').value = "";
+            document.getElementById('sel-beneficiario').value = "";
+
+            if (minCount === 0) {{
+                nodes.update(originalNodes);
+                edges.update(originalEdges);
+                network.fit({{ animation: {{ duration: 800 }} }});
+                return;
+            }}
+
+            var validEdges = originalEdges.filter(function(edge) {{
+                return edge.cantEndosos >= minCount;
+            }});
+
+            var validNodeIds = new Set();
+            validEdges.forEach(function(edge) {{
+                validNodeIds.add(edge.from);
+                validNodeIds.add(edge.to);
+            }});
+
+            // Ocultar/Mostrar aristas
+            var edgeUpdates = originalEdges.map(function(edge) {{
+                return {{
+                    id: edge.id,
+                    hidden: edge.cantEndosos < minCount
+                }};
+            }});
+            edges.update(edgeUpdates);
+
+            // Ocultar/Mostrar nodos
+            var nodeUpdates = originalNodes.map(function(node) {{
+                return {{
+                    id: node.id,
+                    hidden: !validNodeIds.has(node.id)
+                }};
+            }});
+            nodes.update(nodeUpdates);
+
+            network.fit({{ animation: {{ duration: 800 }} }});
+        }}
 
         network.on("click", function (params) {{
             setTimeout(function() {{ network.unselectAll(); }}, 50);
@@ -344,8 +416,14 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
 
-            nodes.update(originalNodes);
-            edges.update(originalEdges);
+            // Restaurar estado según filtro de endosos activo
+            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+            if (minCount > 0) {{
+                filterByEndosos(minCount);
+            }} else {{
+                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
+                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
+            }}
 
             var activeBonos = new Set();
             var activeNodes = new Set();
@@ -409,13 +487,14 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
         }}
 
         function resetZoom() {{
+            document.getElementById('sel-min-endosos').value = "0";
             document.getElementById('sel-bono').value = "";
             document.getElementById('sel-endosatario').value = "";
             document.getElementById('sel-beneficiario').value = "";
 
             if (originalNodes.length > 0 && originalEdges.length > 0) {{
-                nodes.update(originalNodes);
-                edges.update(originalEdges);
+                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false, borderWidth: undefined }})));
+                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false, width: e.width, color: e.color }})));
             }}
 
             network.fit({{ animation: {{ duration: 800 }} }});
