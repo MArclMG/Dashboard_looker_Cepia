@@ -70,7 +70,7 @@ def main():
         if beneficiario_id:
             beneficiarios_set.add(beneficiario_id)
 
-        # 1. NODO PRINCIPAL: Bono / N° Cepia
+        # 1. NODO PRINCIPAL: Bono / N° Cepia (grupo 'bono')
         net.add_node(
             cepia_id, 
             label=f"Bono:\n{cepia_id}", 
@@ -78,6 +78,7 @@ def main():
             color="#005f73", 
             shape="dot", 
             size=28,
+            group="bono",
             font={"size": 14, "face": "arial", "bold": True}
         )
 
@@ -90,6 +91,7 @@ def main():
                 color="#2a9d8f", 
                 shape="square", 
                 size=20,
+                group="beneficiario",
                 font={"size": 11, "face": "arial"}
             )
 
@@ -119,12 +121,12 @@ def main():
                     color="#ee9b00", 
                     shape="ellipse",
                     size=18,
+                    group="endosatario",
                     font={"size": 11, "face": "arial"}
                 )
                 
                 label_arista = f"Endoso {i}: {fecha_val}" if fecha_val else f"Endoso {i}"
                 
-                # Etiquetamos cada enlace con el atributo personal 'bono' para saber a qué traza pertenece exactamente
                 net.add_edge(
                     nodo_actual, 
                     endosatario_id, 
@@ -158,7 +160,7 @@ def main():
     net.write_html(output_path)
 
     inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, cant_endosos_set)
-    print(f"✅ Grafo con coloreado estricto por ruta de bono generado en: {output_path}")
+    print(f"✅ Grafo con interacción de clics en nodos/aristas generado en: {output_path}")
 
 
 def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_endosos):
@@ -249,6 +251,51 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
         }});
 
+        // --- EVENTOS DE CLIC DIRECTO EN EL GRÁFICO ---
+        network.on("selectNode", function (params) {{
+            if (params.nodes.length > 0) {{
+                var selectedNodeId = params.nodes[0];
+                var clickedNode = nodes.get(selectedNodeId);
+
+                // Si se hace clic en un nodo de tipo Bono
+                if (clickedNode && clickedNode.group === 'bono') {{
+                    document.getElementById('sel-bono').value = selectedNodeId;
+                    highlightPath(selectedNodeId, 'bono');
+                }} else if (clickedNode && clickedNode.group === 'endosatario') {{
+                    document.getElementById('sel-endosatario').value = selectedNodeId;
+                    highlightPath(selectedNodeId, 'endosatario');
+                }} else if (clickedNode && clickedNode.group === 'beneficiario') {{
+                    document.getElementById('sel-beneficiario').value = selectedNodeId;
+                    highlightPath(selectedNodeId, 'beneficiario');
+                }}
+            }}
+        }});
+
+        network.on("selectEdge", function (params) {{
+            // Solo si se hizo clic en una arista y NO en un nodo simultáneamente
+            if (params.nodes.length === 0 && params.edges.length > 0) {{
+                var edgeId = params.edges[0];
+                var clickedEdge = edges.get(edgeId);
+
+                if (clickedEdge && clickedEdge.bono) {{
+                    document.getElementById('sel-bono').value = clickedEdge.bono;
+                    highlightPath(clickedEdge.bono, 'bono');
+                }}
+            }}
+        }});
+
+        network.on("deselectNode", function (params) {{
+            if (params.nodes.length === 0 && params.edges.length === 0) {{
+                resetZoom();
+            }}
+        }});
+
+        network.on("deselectEdge", function (params) {{
+            if (params.nodes.length === 0 && params.edges.length === 0) {{
+                resetZoom();
+            }}
+        }});
+
         function highlightPath(selectedValue, type) {{
             if (!selectedValue) {{
                 resetZoom();
@@ -260,7 +307,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
 
-            // 1. Restaurar colores originales primero
+            // Restaurar estado base
             nodes.update(originalNodes);
             edges.update(originalEdges);
 
@@ -268,11 +315,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
             var activeNodes = new Set();
             var activeEdges = new Set();
 
-            // Identificar los bonos válidos según la selección
             if (type === 'bono') {{
                 activeBonos.add(selectedValue);
             }} else {{
-                // Si es Endosatario o Beneficiario, buscar qué bonos pasan REALMENTE por este nodo
                 originalEdges.forEach(function(edge) {{
                     if (edge.from === selectedValue || edge.to === selectedValue) {{
                         if (edge.bono) activeBonos.add(edge.bono);
@@ -280,7 +325,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                 }});
             }}
 
-            // 2. Filtrar únicamente las aristas que pertenecen a los bonos identificados
             originalEdges.forEach(function(edge) {{
                 if (activeBonos.has(edge.bono)) {{
                     activeEdges.add(edge.id);
@@ -289,27 +333,28 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, cant_e
                 }}
             }});
 
-            // 3. Pintar en ROJO / VIVO solo la ruta real activa
+            // Resaltar aristas activas
             var updateEdges = [];
             activeEdges.forEach(function(edgeId) {{
                 updateEdges.push({{
                     id: edgeId,
-                    color: {{ color: '#d90429', highlight: '#d90429' }}, // Rojo vibrante para la ruta activa
+                    color: {{ color: '#d90429', highlight: '#d90429' }},
                     width: 5
                 }});
             }});
             edges.update(updateEdges);
 
+            // Resaltar nodos activos
             var updateNodes = [];
             activeNodes.forEach(function(nodeId) {{
                 updateNodes.push({{
                     id: nodeId,
-                    color: {{ background: '#ffb703', border: '#d90429' }} // Destacar los nodos participantes
+                    color: {{ background: '#ffb703', border: '#d90429' }}
                 }});
             }});
             nodes.update(updateNodes);
 
-            // 4. Centrar suavemente en la entidad seleccionada sin deformar la vista global
+            // Centrar cámara
             if (type === 'bono' && activeNodes.size > 0) {{
                 network.fit({{
                     nodes: Array.from(activeNodes),
