@@ -251,9 +251,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     opts_endosatarios = "".join([f'<option value="{e}">{e}</option>' for e in sorted(endosatarios)])
     opts_beneficiarios = "".join([f'<option value="{b}">{b}</option>' for b in sorted(beneficiarios)])
 
-    opts_num_endosos = '<option value="0">Todos (≥ 0)</option>'
-    for k in range(1, max_endosos + 1):
-        opts_num_endosos += f'<option value="{k}">Al menos {k} endoso{"s" if k > 1 else ""}</option>'
+    opts_num_endosos = '<option value="ALL">Todos</option>'
+    for k in range(0, max_endosos + 1):
+        opts_num_endosos += f'<option value="{k}">{k} endoso{"s" if k != 1 else ""}</option>'
 
     panel_html = f"""
     <style>
@@ -302,7 +302,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             margin-top: 16px;
         }}
 
-        /* HOVER TEXT COMPLETAMENTE SÓLIDO Y OPACO */
+        /* HOVER TEXT COMPLETAMENTE SÓLIDO */
         div.vis-tooltip {{
             position: absolute !important;
             background-color: transparent !important;
@@ -323,7 +323,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             white-space: normal;
             overflow-wrap: break-word;
             word-break: break-word;
-            opacity: 1.0 !important; /* Opacidad 100% solida */
+            opacity: 1.0 !important;
         }}
     </style>
 
@@ -337,10 +337,17 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </select>
         </label>
 
-        <label>Min. Endosos:
-            <select id="sel-min-endosos" onchange="filterByEndosos(this.value)">
-                {opts_num_endosos}
-            </select>
+        <label>Endosos:
+            <div style="display: flex; gap: 4px;">
+                <select id="sel-op-endosos" onchange="filterByEndosos()">
+                    <option value="gte">≥</option>
+                    <option value="eq">=</option>
+                    <option value="lte">≤</option>
+                </select>
+                <select id="sel-val-endosos" onchange="filterByEndosos()">
+                    {opts_num_endosos}
+                </select>
+            </div>
         </label>
 
         <label>Bono (N° Cepia):
@@ -369,7 +376,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     </div>
 
     <script>
-        // CONFIGURACIÓN DE PALETAS RESTAURADAS
         var THEMES = {{
             dia1: {{
                 bgGrafo: "#FAFAFA", panelBg: "#FAFAFA", panelBorder: "#E0DAD3",
@@ -421,13 +427,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var currentIsolatedType = null;
         var showEdgeLabels = true;
 
-        // APLICAR TEMA Y COLORIMETRÍA PANTALLA COMPLETA
+        // APLICAR TEMA MANTENIENDO COLORES PERSONALIZADOS
         function applyThemeStyles(themeKey) {{
             var t = THEMES[themeKey] || THEMES.dia1;
             currentThemeKey = themeKey;
             localStorage.setItem('selectedTheme', themeKey);
 
-            // Fondo de pantalla completo
             document.body.style.backgroundColor = t.bgGrafo;
             var netContainer = document.getElementById('mynetwork');
             if (netContainer) netContainer.style.backgroundColor = t.bgGrafo;
@@ -447,24 +452,24 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var btn = document.getElementById('btn-reset');
             btn.style.backgroundColor = t.btnBg;
 
-            // Nodos
+            // Actualizar Nodos
             var nodeUpdates = originalNodes.map(function(n) {{
                 var groupTheme = t[n.group] || t.bono;
-                var isSelected = (currentIsolatedValue && (n.id === currentIsolatedValue));
+                var isExactlySelected = (currentIsolatedValue && n.id === currentIsolatedValue);
                 return {{
                     id: n.id,
                     color: {{
                         background: groupTheme.bg,
-                        border: isSelected ? t.edgeHighlight : groupTheme.border,
+                        border: isExactlySelected ? t.edgeHighlight : groupTheme.border,
                         highlight: {{ background: groupTheme.bg, border: t.edgeHighlight }}
                     }},
-                    borderWidth: isSelected ? 3 : 1.5,
+                    borderWidth: isExactlySelected ? 3 : 1.5,
                     font: {{ color: groupTheme.text, face: 'Arial' }}
                 }};
             }});
             nodes.update(nodeUpdates);
 
-            // Aristas
+            // Actualizar Aristas
             var edgeUpdates = originalEdges.map(function(e) {{
                 return {{
                     id: e.id,
@@ -483,7 +488,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }}
         }}
 
-        // BOTÓN MOSTRAR/OCULTAR FECHAS EN ARISTAS
         function toggleEdgeLabels() {{
             showEdgeLabels = !showEdgeLabels;
             var btn = document.getElementById('btn-toggle-labels');
@@ -498,7 +502,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             edges.update(edgeUpdates);
         }}
 
-        // TOOLTIP SÓLIDO HTML
+        // PARSER TOOLTIP
         network.once("beforeDrawing", function() {{
             var allNodes = nodes.get();
             var updates = [];
@@ -513,7 +517,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             if (updates.length > 0) {{ nodes.update(updates); }}
         }});
 
-        // ACTUALIZAR ESTILO SÓLIDO DEL TOOLTIP SEGÚN TEMA
         network.on("hoverNode", function() {{
             var t = THEMES[currentThemeKey] || THEMES.dia1;
             var tooltips = document.querySelectorAll('.custom-tooltip-card');
@@ -525,7 +528,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }});
         }});
 
-        // COORDENADAS E INICIALIZACIÓN
         network.once("stabilizationIterationsDone", function() {{
             network.setOptions({{ physics: {{ enabled: false }} }});
             var allIds = nodes.getIds();
@@ -594,33 +596,55 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             selBene.value = beneList.includes(valBene) ? valBene : "";
         }}
 
-        // FILTRO MIN. ENDOSOS
-        function filterByEndosos(minCount) {{
-            minCount = parseInt(minCount, 10);
+        // EVALUACIÓN FLEXIBLE DEL FILTRO DE ENDOSOS (=, >=, <=)
+        function checkEndososCondition(val, op, targetVal) {{
+            if (targetVal === "ALL") return true;
+            var target = parseInt(targetVal, 10);
+            var count = parseInt(val, 10) || 0;
+
+            if (op === 'eq') return count === target;
+            if (op === 'lte') return count <= target;
+            return count >= target; // 'gte' por defecto
+        }}
+
+        function filterByEndosos() {{
+            var op = document.getElementById('sel-op-endosos').value;
+            var val = document.getElementById('sel-val-endosos').value;
+
             currentIsolatedValue = null;
             currentIsolatedType = null;
 
-            if (minCount === 0) {{
+            if (val === "ALL") {{
+                applyThemeStyles(currentThemeKey);
                 nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
                 edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
                 updateSelectDropdowns(null);
                 return;
             }}
 
-            var validEdges = originalEdges.filter(e => e.cantEndosos >= minCount);
+            var validEdges = originalEdges.filter(e => checkEndososCondition(e.cantEndosos, op, val));
             var validNodeIds = new Set();
             validEdges.forEach(function(e) {{
                 validNodeIds.add(e.from);
                 validNodeIds.add(e.to);
             }});
 
-            edges.update(originalEdges.map(e => ({{ id: e.id, hidden: e.cantEndosos < minCount }})));
-            nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: !validNodeIds.has(n.id) }})));
+            applyThemeStyles(currentThemeKey);
+
+            edges.update(originalEdges.map(e => ({{
+                id: e.id,
+                hidden: !checkEndososCondition(e.cantEndosos, op, val)
+            }})));
+
+            nodes.update(originalNodes.map(n => ({{
+                id: n.id,
+                hidden: !validNodeIds.has(n.id)
+            }})));
 
             updateSelectDropdowns(validNodeIds);
         }}
 
-        // AISLAMIENTO
+        // AISLAMIENTO LIMPIO: SOLO DESTACA EL BORDES Y RUTAS SELECCIONADAS
         function applyIsolationFilter(selectedValue, type) {{
             var t = THEMES[currentThemeKey] || THEMES.dia1;
 
@@ -629,8 +653,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
 
             if (!selectedValue) {{
-                var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
-                filterByEndosos(minCount);
+                filterByEndosos();
                 return;
             }}
 
@@ -661,28 +684,35 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }}
             }});
 
-            var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
+            var op = document.getElementById('sel-op-endosos').value;
+            var val = document.getElementById('sel-val-endosos').value;
 
+            // Nodos: solo el seleccionado lleva borde grueso frambuesa
             nodes.update(originalNodes.map(n => {{
                 var isActive = activeNodes.has(n.id);
+                var isExactlySelected = (n.id === selectedValue);
                 var groupTheme = t[n.group] || t.bono;
+
                 return {{
                     id: n.id,
                     hidden: !isActive,
-                    borderWidth: isActive ? 3 : 1.5,
+                    borderWidth: isExactlySelected ? 3 : 1.5,
                     color: {{
                         background: groupTheme.bg,
-                        border: isActive ? t.edgeHighlight : groupTheme.border
+                        border: isExactlySelected ? t.edgeHighlight : groupTheme.border
                     }}
                 }};
             }}));
 
+            // Aristas activas destacadas en el color de la ruta
             edges.update(originalEdges.map(e => {{
                 var isActive = activeEdges.has(e.id);
+                var passesEndosos = checkEndososCondition(e.cantEndosos, op, val);
+
                 return {{
                     id: e.id,
-                    hidden: !isActive || (minCount > 0 && e.cantEndosos < minCount),
-                    width: isActive ? 3.8 : 1.5,
+                    hidden: !isActive || !passesEndosos,
+                    width: isActive ? 3.5 : 1.5,
                     color: {{ color: isActive ? t.edgeHighlight : t.edgeNormal }}
                 }};
             }}));
@@ -690,7 +720,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             network.fit({{ nodes: Array.from(activeNodes), animation: {{ duration: 600 }} }});
         }}
 
-        // DESELECCIÓN TOTAL AL TOCAR EL BACKGROUND
+        // DESELECCIÓN TOTAL Y RETORNO A LA PALETA ACTIVA
         network.on("click", function (params) {{
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
@@ -724,15 +754,25 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
-                // CLIC EN EL BACKGROUND: Limpia la selección y restaura la vista
-                var minCount = parseInt(document.getElementById('sel-min-endosos').value, 10);
-                filterByEndosos(minCount);
+                // CLIC EN EL CANVAS: Limpia la selección y restaura la paleta guardada
+                currentIsolatedValue = null;
+                currentIsolatedType = null;
+                document.getElementById('sel-bono').value = "";
+                document.getElementById('sel-endosatario').value = "";
+                document.getElementById('sel-beneficiario').value = "";
+
+                filterByEndosos();
             }}
         }});
 
-        // RESTABLECER ESTADO
+        // RESTABLECER COMPLETO
         function resetZoom() {{
-            document.getElementById('sel-min-endosos').value = "0";
+            document.getElementById('sel-op-endosos').value = "gte";
+            document.getElementById('sel-val-endosos').value = "ALL";
+            document.getElementById('sel-bono').value = "";
+            document.getElementById('sel-endosatario').value = "";
+            document.getElementById('sel-beneficiario').value = "";
+            
             currentIsolatedValue = null;
             currentIsolatedType = null;
 
