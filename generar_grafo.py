@@ -427,7 +427,27 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var currentIsolatedType = null;
         var showEdgeLabels = true;
 
-        // APLICAR TEMA MANTENIENDO COLORES PERSONALIZADOS
+        // FUNCIÓN CENTRALIZADA PARA MANTENER LA PALETA ACTIVA
+        function getStyledNodes(nodeList) {{
+            var t = THEMES[currentThemeKey] || THEMES.dia1;
+            return nodeList.map(function(n) {{
+                var groupTheme = t[n.group] || t.bono;
+                var isExactlySelected = (currentIsolatedValue && n.id === currentIsolatedValue);
+                return {{
+                    id: n.id,
+                    hidden: n.hidden !== undefined ? n.hidden : false,
+                    borderWidth: isExactlySelected ? 3 : 1.5,
+                    color: {{
+                        background: groupTheme.bg,
+                        border: isExactlySelected ? t.edgeHighlight : groupTheme.border,
+                        highlight: {{ background: groupTheme.bg, border: t.edgeHighlight }}
+                    }},
+                    font: {{ color: groupTheme.text, face: 'Arial' }}
+                }};
+            }});
+        }}
+
+        // APLICAR TEMA GLOBALMENTE
         function applyThemeStyles(themeKey) {{
             var t = THEMES[themeKey] || THEMES.dia1;
             currentThemeKey = themeKey;
@@ -452,30 +472,21 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var btn = document.getElementById('btn-reset');
             btn.style.backgroundColor = t.btnBg;
 
-            // Actualizar Nodos
-            var nodeUpdates = originalNodes.map(function(n) {{
-                var groupTheme = t[n.group] || t.bono;
-                var isExactlySelected = (currentIsolatedValue && n.id === currentIsolatedValue);
-                return {{
-                    id: n.id,
-                    color: {{
-                        background: groupTheme.bg,
-                        border: isExactlySelected ? t.edgeHighlight : groupTheme.border,
-                        highlight: {{ background: groupTheme.bg, border: t.edgeHighlight }}
-                    }},
-                    borderWidth: isExactlySelected ? 3 : 1.5,
-                    font: {{ color: groupTheme.text, face: 'Arial' }}
-                }};
-            }});
-            nodes.update(nodeUpdates);
+            // Re-pintar nodos con la paleta activa
+            nodes.update(getStyledNodes(originalNodes));
 
-            // Actualizar Aristas
+            // Re-pintar aristas respetando visibilidad de fechas
             var edgeUpdates = originalEdges.map(function(e) {{
                 return {{
                     id: e.id,
                     label: showEdgeLabels ? e.label : "",
                     color: {{ color: t.edgeNormal, highlight: t.edgeHighlight }},
-                    font: {{ color: t.edgeText, size: 8, strokeWidth: 3, strokeColor: t.bgGrafo }}
+                    font: {{ 
+                        color: t.edgeText, 
+                        size: showEdgeLabels ? 8 : 0, 
+                        strokeWidth: showEdgeLabels ? 3 : 0, 
+                        strokeColor: t.bgGrafo 
+                    }}
                 }};
             }});
             edges.update(edgeUpdates);
@@ -488,15 +499,24 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }}
         }}
 
+        // BOTÓN MOSTRAR/OCULTAR FECHAS EN ARISTAS
         function toggleEdgeLabels() {{
             showEdgeLabels = !showEdgeLabels;
             var btn = document.getElementById('btn-toggle-labels');
             btn.innerText = showEdgeLabels ? "Ocultar Fechas" : "Mostrar Fechas";
 
+            var t = THEMES[currentThemeKey] || THEMES.dia1;
+
             var edgeUpdates = originalEdges.map(function(e) {{
                 return {{
                     id: e.id,
-                    label: showEdgeLabels ? e.label : ""
+                    label: showEdgeLabels ? e.label : "",
+                    font: {{
+                        color: t.edgeText,
+                        size: showEdgeLabels ? 8 : 0,
+                        strokeWidth: showEdgeLabels ? 3 : 0,
+                        strokeColor: t.bgGrafo
+                    }}
                 }};
             }});
             edges.update(edgeUpdates);
@@ -596,7 +616,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             selBene.value = beneList.includes(valBene) ? valBene : "";
         }}
 
-        // EVALUACIÓN FLEXIBLE DEL FILTRO DE ENDOSOS (=, >=, <=)
         function checkEndososCondition(val, op, targetVal) {{
             if (targetVal === "ALL") return true;
             var target = parseInt(targetVal, 10);
@@ -604,7 +623,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             if (op === 'eq') return count === target;
             if (op === 'lte') return count <= target;
-            return count >= target; // 'gte' por defecto
+            return count >= target;
         }}
 
         function filterByEndosos() {{
@@ -615,9 +634,15 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             currentIsolatedType = null;
 
             if (val === "ALL") {{
-                applyThemeStyles(currentThemeKey);
-                nodes.update(originalNodes.map(n => ({{ id: n.id, hidden: false }})));
-                edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false }})));
+                nodes.update(getStyledNodes(originalNodes.map(n => ({{ ...n, hidden: false }}))));
+                
+                var t = THEMES[currentThemeKey] || THEMES.dia1;
+                edges.update(originalEdges.map(e => ({{ 
+                    id: e.id, 
+                    hidden: false,
+                    label: showEdgeLabels ? e.label : "",
+                    font: {{ size: showEdgeLabels ? 8 : 0, color: t.edgeText, strokeWidth: showEdgeLabels ? 3 : 0, strokeColor: t.bgGrafo }}
+                }})));
                 updateSelectDropdowns(null);
                 return;
             }}
@@ -629,22 +654,23 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 validNodeIds.add(e.to);
             }});
 
-            applyThemeStyles(currentThemeKey);
-
+            var t = THEMES[currentThemeKey] || THEMES.dia1;
             edges.update(originalEdges.map(e => ({{
                 id: e.id,
-                hidden: !checkEndososCondition(e.cantEndosos, op, val)
+                hidden: !checkEndososCondition(e.cantEndosos, op, val),
+                label: showEdgeLabels ? e.label : "",
+                font: {{ size: showEdgeLabels ? 8 : 0, color: t.edgeText, strokeWidth: showEdgeLabels ? 3 : 0, strokeColor: t.bgGrafo }}
             }})));
 
-            nodes.update(originalNodes.map(n => ({{
-                id: n.id,
+            var updatedNodes = originalNodes.map(n => ({{
+                ...n,
                 hidden: !validNodeIds.has(n.id)
-            }})));
+            }}));
 
+            nodes.update(getStyledNodes(updatedNodes));
             updateSelectDropdowns(validNodeIds);
         }}
 
-        // AISLAMIENTO LIMPIO: SOLO DESTACA EL BORDES Y RUTAS SELECCIONADAS
         function applyIsolationFilter(selectedValue, type) {{
             var t = THEMES[currentThemeKey] || THEMES.dia1;
 
@@ -687,7 +713,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var op = document.getElementById('sel-op-endosos').value;
             var val = document.getElementById('sel-val-endosos').value;
 
-            // Nodos: solo el seleccionado lleva borde grueso frambuesa
+            // Mantiene el estilo del tema y resalta el nodo objetivo
             nodes.update(originalNodes.map(n => {{
                 var isActive = activeNodes.has(n.id);
                 var isExactlySelected = (n.id === selectedValue);
@@ -704,7 +730,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }};
             }}));
 
-            // Aristas activas destacadas en el color de la ruta
+            // CORREGIDO: Mantiene la visibilidad del botón de fechas en las aristas aisladas
             edges.update(originalEdges.map(e => {{
                 var isActive = activeEdges.has(e.id);
                 var passesEndosos = checkEndososCondition(e.cantEndosos, op, val);
@@ -712,15 +738,22 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 return {{
                     id: e.id,
                     hidden: !isActive || !passesEndosos,
+                    label: showEdgeLabels ? e.label : "",
                     width: isActive ? 3.5 : 1.5,
-                    color: {{ color: isActive ? t.edgeHighlight : t.edgeNormal }}
+                    color: {{ color: isActive ? t.edgeHighlight : t.edgeNormal }},
+                    font: {{ 
+                        color: t.edgeText, 
+                        size: showEdgeLabels ? 8 : 0, 
+                        strokeWidth: showEdgeLabels ? 3 : 0, 
+                        strokeColor: t.bgGrafo 
+                    }}
                 }};
             }}));
 
             network.fit({{ nodes: Array.from(activeNodes), animation: {{ duration: 600 }} }});
         }}
 
-        // DESELECCIÓN TOTAL Y RETORNO A LA PALETA ACTIVA
+        // DESELECCIÓN EN CANVAS Y RETORNO SEGURO A LA PALETA
         network.on("click", function (params) {{
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
@@ -754,7 +787,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
-                // CLIC EN EL CANVAS: Limpia la selección y restaura la paleta guardada
                 currentIsolatedValue = null;
                 currentIsolatedType = null;
                 document.getElementById('sel-bono').value = "";
@@ -765,7 +797,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }}
         }});
 
-        // RESTABLECER COMPLETO
         function resetZoom() {{
             document.getElementById('sel-op-endosos').value = "gte";
             document.getElementById('sel-val-endosos').value = "ALL";
@@ -777,20 +808,23 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             currentIsolatedType = null;
 
             updateSelectDropdowns(null);
+
+            nodes.update(getStyledNodes(originalNodes.map(n => ({{
+                ...n,
+                x: initialPositions[n.id] ? initialPositions[n.id].x : undefined,
+                y: initialPositions[n.id] ? initialPositions[n.id].y : undefined,
+                hidden: false
+            }}))));
+
+            var t = THEMES[currentThemeKey] || THEMES.dia1;
+            edges.update(originalEdges.map(e => ({{ 
+                id: e.id, 
+                hidden: false, 
+                label: showEdgeLabels ? e.label : "",
+                font: {{ size: showEdgeLabels ? 8 : 0, color: t.edgeText, strokeWidth: showEdgeLabels ? 3 : 0, strokeColor: t.bgGrafo }}
+            }})));
+
             applyThemeStyles(currentThemeKey);
-
-            var nodeUpdates = [];
-            for (var nodeId in initialPositions) {{
-                nodeUpdates.push({{
-                    id: nodeId,
-                    x: initialPositions[nodeId].x,
-                    y: initialPositions[nodeId].y,
-                    hidden: false
-                }});
-            }}
-            nodes.update(nodeUpdates);
-            edges.update(originalEdges.map(e => ({{ id: e.id, hidden: false, label: showEdgeLabels ? e.label : "" }})));
-
             network.fit({{ animation: {{ duration: 600 }} }});
             network.unselectAll();
         }}
