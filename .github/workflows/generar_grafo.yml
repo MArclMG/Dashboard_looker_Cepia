@@ -9,6 +9,11 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    # Definir el entorno evita que deploy-pages@v4 se quede en "updating_pages" infinito
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     permissions:
       contents: read
       pages: write
