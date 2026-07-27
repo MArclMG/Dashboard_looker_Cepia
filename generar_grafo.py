@@ -247,10 +247,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     """
     content = content.replace("<head>", f"<head>\n{meta_cache}")
 
-    opts_bonos = "".join([f'<option value="{b}">{b}</option>' for b in sorted(bonos)])
-    opts_endosatarios = "".join([f'<option value="{e}">{e}</option>' for e in sorted(endosatarios)])
-    opts_beneficiarios = "".join([f'<option value="{b}">{b}</option>' for b in sorted(beneficiarios)])
-
     opts_num_endosos = '<option value="ALL">Todos</option>'
     for k in range(0, max_endosos + 1):
         opts_num_endosos += f'<option value="{k}">{k} endoso{"s" if k != 1 else ""}</option>'
@@ -302,7 +298,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             margin-top: 16px;
         }}
 
-        /* HOVER TEXT COMPLETAMENTE SÓLIDO */
+        /* FIX DE HOVER: TOOLTIP 100% SÓLIDO E INSTANTÁNEO CON VARIABLES CSS */
         div.vis-tooltip {{
             position: absolute !important;
             background-color: transparent !important;
@@ -324,6 +320,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             overflow-wrap: break-word;
             word-break: break-word;
             opacity: 1.0 !important;
+            background-color: var(--tooltip-bg, #FFFFFF) !important;
+            color: var(--tooltip-text, #2B2B2B) !important;
+            border: 1px solid var(--tooltip-border, #E0DAD3) !important;
+            border-left: 4px solid var(--tooltip-highlight, #C65A72) !important;
         }}
     </style>
 
@@ -340,7 +340,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         <label>Endosos:
             <div style="display: flex; gap: 4px;">
                 <select id="sel-op-endosos" onchange="filterByEndosos()">
-                    <option value="gte">≥</option>
+                    <option value="gte">≥ </option>
                     <option value="eq">=</option>
                     <option value="lte">≤</option>
                 </select>
@@ -353,21 +353,18 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         <label>Bono (N° Cepia):
             <select id="sel-bono" class="searchable-select" onchange="applyIsolationFilter(this.value, 'bono')">
                 <option value="">-- Todos --</option>
-                {opts_bonos}
             </select>
         </label>
 
         <label>Endosatario:
             <select id="sel-endosatario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'endosatario')">
                 <option value="">-- Todos --</option>
-                {opts_endosatarios}
             </select>
         </label>
 
         <label>Beneficiario:
             <select id="sel-beneficiario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'beneficiario')">
                 <option value="">-- Todos --</option>
-                {opts_beneficiarios}
             </select>
         </label>
 
@@ -472,6 +469,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var btn = document.getElementById('btn-reset');
             btn.style.backgroundColor = t.btnBg;
 
+            // Inyectar variables CSS para que los Tooltips nazcan 100% opacos
+            document.documentElement.style.setProperty('--tooltip-bg', t.tooltipBg);
+            document.documentElement.style.setProperty('--tooltip-text', t.tooltipText);
+            document.documentElement.style.setProperty('--tooltip-border', t.tooltipBorder);
+            document.documentElement.style.setProperty('--tooltip-highlight', t.edgeHighlight);
+
             // Re-pintar nodos con la paleta activa
             nodes.update(getStyledNodes(originalNodes));
 
@@ -522,30 +525,31 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             edges.update(edgeUpdates);
         }}
 
-        // PARSER TOOLTIP
+        // PARSER TOOLTIP DE NODOS Y ARISTAS
         network.once("beforeDrawing", function() {{
             var allNodes = nodes.get();
-            var updates = [];
+            var nodeUpdates = [];
             allNodes.forEach(function(node) {{
                 if (node.title && typeof node.title === 'string') {{
                     var container = document.createElement('div');
                     container.className = 'custom-tooltip-card';
                     container.innerHTML = node.title;
-                    updates.push({{ id: node.id, title: container }});
+                    nodeUpdates.push({{ id: node.id, title: container }});
                 }}
             }});
-            if (updates.length > 0) {{ nodes.update(updates); }}
-        }});
+            if (nodeUpdates.length > 0) {{ nodes.update(nodeUpdates); }}
 
-        network.on("hoverNode", function() {{
-            var t = THEMES[currentThemeKey] || THEMES.dia1;
-            var tooltips = document.querySelectorAll('.custom-tooltip-card');
-            tooltips.forEach(function(card) {{
-                card.style.backgroundColor = t.tooltipBg;
-                card.style.color = t.tooltipText;
-                card.style.border = "1px solid " + t.tooltipBorder;
-                card.style.borderLeft = "4px solid " + t.edgeHighlight;
+            var allEdges = edges.get();
+            var edgeUpdates = [];
+            allEdges.forEach(function(edge) {{
+                if (edge.title && typeof edge.title === 'string') {{
+                    var container = document.createElement('div');
+                    container.className = 'custom-tooltip-card';
+                    container.innerHTML = edge.title;
+                    edgeUpdates.push({{ id: edge.id, title: container }});
+                }}
             }});
+            if (edgeUpdates.length > 0) {{ edges.update(edgeUpdates); }}
         }});
 
         network.once("stabilizationIterationsDone", function() {{
@@ -563,6 +567,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             
             document.getElementById('sel-theme').value = currentThemeKey;
             applyThemeStyles(currentThemeKey);
+            updateSelectDropdowns(null);
         }});
 
         // BÚSQUEDA RÁPIDA EN DESPLEGABLES
@@ -586,6 +591,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }});
         }});
 
+        // ACTUALIZAR DESPLEGABLES INCLUYENDO CONTADORES DE ENDOSOS Y BONOS
         function updateSelectDropdowns(validNodeIds) {{
             var selBono = document.getElementById('sel-bono');
             var selEndo = document.getElementById('sel-endosatario');
@@ -595,25 +601,74 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var valEndo = selEndo.value;
             var valBene = selBene.value;
 
-            var bonosList = []; var endoList = []; var beneList = [];
+            var bonosList = []; 
+            var endoMap = {{}}; 
+            var beneMap = {{}};
+
+            var activeEdges = originalEdges.filter(e => !validNodeIds || (validNodeIds.has(e.from) && validNodeIds.has(e.to)));
 
             originalNodes.forEach(function(n) {{
                 if (!validNodeIds || validNodeIds.has(n.id)) {{
-                    if (n.group === 'bono') bonosList.push(n.id);
-                    if (n.group === 'endosatario') endoList.push(n.id);
-                    if (n.group === 'beneficiario') beneList.push(n.id);
+                    if (n.group === 'bono') {{
+                        bonosList.push(n.id);
+                    }}
                 }}
             }});
 
-            bonosList.sort(); endoList.sort(); beneList.sort();
+            // Contar endosos (conexiones entrantes) por endosatario
+            activeEdges.forEach(function(e) {{
+                var toNode = originalNodes.find(n => n.id === e.to);
+                if (toNode && toNode.group === 'endosatario' && (!validNodeIds || validNodeIds.has(toNode.id))) {{
+                    endoMap[toNode.id] = (endoMap[toNode.id] || 0) + 1;
+                }}
+            }});
 
-            selBono.innerHTML = '<option value="">-- Todos --</option>' + bonosList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
-            selEndo.innerHTML = '<option value="">-- Todos --</option>' + endoList.map(e => `<option value="${{e}}">${{e}}</option>`).join('');
-            selBene.innerHTML = '<option value="">-- Todos --</option>' + beneList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
+            // Asegurar que endosatarios sin aristas filtradas mantengan registro si existen
+            originalNodes.forEach(function(n) {{
+                if (n.group === 'endosatario' && (!validNodeIds || validNodeIds.has(n.id))) {{
+                    if (!(n.id in endoMap)) endoMap[n.id] = 0;
+                }}
+            }});
+
+            // Contar Bonos asignados a cada beneficiario
+            activeEdges.forEach(function(e) {{
+                var toNode = originalNodes.find(n => n.id === e.to);
+                if (toNode && toNode.group === 'beneficiario' && (!validNodeIds || validNodeIds.has(toNode.id))) {{
+                    if (!beneMap[toNode.id]) beneMap[toNode.id] = new Set();
+                    if (e.bono) beneMap[toNode.id].add(e.bono);
+                }}
+            }});
+
+            originalNodes.forEach(function(n) {{
+                if (n.group === 'beneficiario' && (!validNodeIds || validNodeIds.has(n.id))) {{
+                    if (!(n.id in beneMap)) beneMap[n.id] = new Set();
+                }}
+            }});
+
+            bonosList.sort();
+            var sortedEndos = Object.keys(endoMap).sort();
+            var sortedBenes = Object.keys(beneMap).sort();
+
+            selBono.innerHTML = '<option value="">-- Todos --</option>' + 
+                bonosList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
+
+            selEndo.innerHTML = '<option value="">-- Todos --</option>' + 
+                sortedEndos.map(e => {{
+                    var cant = endoMap[e];
+                    var labelText = `${{e}} (${{cant}} endoso${{cant !== 1 ? 's' : ''}})`;
+                    return `<option value="${{e}}">${{labelText}}</option>`;
+                }}).join('');
+
+            selBene.innerHTML = '<option value="">-- Todos --</option>' + 
+                sortedBenes.map(b => {{
+                    var cant = beneMap[b].size;
+                    var labelText = `${{b}} (${{cant}} bono${{cant !== 1 ? 's' : ''}})`;
+                    return `<option value="${{b}}">${{labelText}}</option>`;
+                }}).join('');
 
             selBono.value = bonosList.includes(valBono) ? valBono : "";
-            selEndo.value = endoList.includes(valEndo) ? valEndo : "";
-            selBene.value = beneList.includes(valBene) ? valBene : "";
+            selEndo.value = sortedEndos.includes(valEndo) ? valEndo : "";
+            selBene.value = sortedBenes.includes(valBene) ? valBene : "";
         }}
 
         function checkEndososCondition(val, op, targetVal) {{
@@ -713,7 +768,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var op = document.getElementById('sel-op-endosos').value;
             var val = document.getElementById('sel-val-endosos').value;
 
-            // Mantiene el estilo del tema y resalta el nodo objetivo
             nodes.update(originalNodes.map(n => {{
                 var isActive = activeNodes.has(n.id);
                 var isExactlySelected = (n.id === selectedValue);
@@ -730,7 +784,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }};
             }}));
 
-            // CORREGIDO: Mantiene la visibilidad del botón de fechas en las aristas aisladas
             edges.update(originalEdges.map(e => {{
                 var isActive = activeEdges.has(e.id);
                 var passesEndosos = checkEndososCondition(e.cantEndosos, op, val);
