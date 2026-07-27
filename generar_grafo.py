@@ -595,21 +595,18 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             selectElem.value = currentVal;
         }}
 
-        function getStyledNodes(nodeList) {{
+        function getStyledNodes(nodeList, validNodeIds) {{
             var t = THEMES[currentThemeKey] || THEMES.dia1;
             return nodeList.map(function(n) {{
                 var groupTheme = t[n.group] || t.bono;
                 var isExactlySelected = (currentIsolatedValue && n.id === currentIsolatedValue);
                 
-                // MANTENER EL ESTADO HIDDEN ACTUAL SI YA FUE EVALUADO
-                var currentVisState = nodes.get(n.id);
-                var isHiddenState = (currentVisState && currentVisState.hidden !== undefined) 
-                    ? currentVisState.hidden 
-                    : (n.hidden !== undefined ? n.hidden : false);
+                // Si se pasa validNodeIds, el nodo es visible SOLO si pertenece al conjunto
+                var isVisible = validNodeIds ? validNodeIds.has(n.id) : (n.hidden !== undefined ? !n.hidden : true);
 
                 var styledNode = {{
                     id: n.id,
-                    hidden: isHiddenState,
+                    hidden: !isVisible,
                     borderWidth: isExactlySelected ? 3 : 1.5,
                     color: {{
                         background: groupTheme.bg,
@@ -657,13 +654,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             document.documentElement.style.setProperty('--tooltip-text', t.tooltipText);
             document.documentElement.style.setProperty('--tooltip-border', t.tooltipBorder);
             document.documentElement.style.setProperty('--tooltip-highlight', t.edgeHighlight);
-
-            nodes.update(getStyledNodes(originalNodes));
         }}
 
         function changeTheme(themeKey) {{
             applyThemeStyles(themeKey);
-            // RE-APLICAR LOS FILTROS SOBRE LAS ARISTAS/NODOS PARA PRESERVAR EL ESTADO DE VISIBILIDAD
             if (currentIsolatedValue) {{
                 applyIsolationFilter(currentIsolatedValue, currentIsolatedType, true);
             }} else {{
@@ -883,12 +877,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 font: {{ size: showEdgeLabels ? 8 : 0, color: t.edgeText, strokeWidth: showEdgeLabels ? 3 : 0, strokeColor: t.bgGrafo }}
             }})));
 
-            var updatedNodes = originalNodes.map(n => ({{
-                ...n,
-                hidden: !validNodeIds.has(n.id)
-            }}));
-
-            nodes.update(getStyledNodes(updatedNodes));
+            nodes.update(getStyledNodes(originalNodes, validNodeIds));
             updateSelectDropdowns(validNodeIds);
         }}
 
@@ -970,22 +959,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }};
             }});
 
-            nodes.update(originalNodes.map(n => {{
-                var isExactlySelected = (n.id === selectedValue);
-                var isConnectedAndVisible = visibleNodeIds.has(n.id) || isExactlySelected;
-                var groupTheme = t[n.group] || t.bono;
+            if (selectedValue) {{
+                visibleNodeIds.add(selectedValue);
+            }}
 
-                return {{
-                    id: n.id,
-                    hidden: !isConnectedAndVisible,
-                    borderWidth: isExactlySelected ? 3 : 1.5,
-                    color: {{
-                        background: groupTheme.bg,
-                        border: isExactlySelected ? t.edgeHighlight : groupTheme.border
-                    }}
-                }};
-            }}));
-
+            nodes.update(getStyledNodes(originalNodes, visibleNodeIds));
             edges.update(edgeUpdates);
 
             updateSelectDropdowns(visibleNodeIds);
