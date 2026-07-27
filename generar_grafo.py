@@ -489,19 +489,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var navigationHistory = [];
         var isNavigatingBack = false;
 
-        // BLINDAJE 1: BLOQUEO ABSOLUTO DE EVENTOS EN EL PANEL
-        var panelElem = document.getElementById('filter-panel');
-        if (panelElem) {{
-            ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu'].forEach(function(evtName) {{
-                panelElem.addEventListener(evtName, function(e) {{
-                    e.stopPropagation();
-                    if (e.stopImmediatePropagation) {{
-                        e.stopImmediatePropagation();
-                    }}
-                }}, true);
-            }});
-        }}
-
         function pushNavigationState() {{
             if (isNavigatingBack) return;
             var currentState = {{
@@ -946,13 +933,14 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             network.fit({{ nodes: nodesToFit, animation: {{ duration: 600 }} }});
         }}
 
-        // BLINDAJE 2: VERIFICACIÓN EXPLÍCITA DE TARGET DENTRO DE VIS.JS
+        // AISLAMIENTO DE EVENTOS MEDIANTE VERIFICACIÓN DE TARGET
         network.on("click", function (params) {{
             var nativeEvt = params.event ? params.event.srcEvent : null;
             if (nativeEvt) {{
                 var targetElem = nativeEvt.target || nativeEvt.srcElement;
-                if (targetElem && document.getElementById('filter-panel').contains(targetElem)) {{
-                    return; // ABORTAR SI EL CLIC OCURRIÓ EN EL PANEL
+                var panelContainer = document.getElementById('filter-panel');
+                if (targetElem && panelContainer && panelContainer.contains(targetElem)) {{
+                    return; // ABORTAR EVENTO DE VIS.JS SI EL CLIC OCURRIÓ EN CUALQUIER PARTE DEL PANEL
                 }}
             }}
 
@@ -975,7 +963,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
-                // RETROCEDER SOLO SI EL CLIC FUE DENTRO DEL CANVAS REAL
                 if (navigationHistory.length > 0) {{
                     var previousState = navigationHistory.pop();
                     isNavigatingBack = true;
