@@ -283,6 +283,34 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             flex-direction: column;
             gap: 4px;
         }}
+        .header-sort-row {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .sort-btn-group {{
+            display: flex;
+            gap: 2px;
+            background: rgba(0,0,0,0.1);
+            padding: 2px;
+            border-radius: 4px;
+        }}
+        .sort-btn {{
+            font-size: 10px !important;
+            padding: 2px 5px !important;
+            border: none !important;
+            background: transparent !important;
+            cursor: pointer;
+            opacity: 0.6;
+            border-radius: 3px;
+            margin-top: 0 !important;
+        }}
+        .sort-btn.active {{
+            opacity: 1.0;
+            font-weight: bold;
+            background: rgba(255,255,255,0.2) !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }}
         #filter-panel select, #filter-panel button {{
             padding: 6px 10px;
             border-radius: 4px;
@@ -298,7 +326,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             margin-top: 16px;
         }}
 
-        /* FIX DE HOVER: TOOLTIP 100% SÓLIDO E INSTANTÁNEO CON VARIABLES CSS */
+        /* HOVER TEXT COMPLETAMENTE SÓLIDO */
         div.vis-tooltip {{
             position: absolute !important;
             background-color: transparent !important;
@@ -340,7 +368,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         <label>Endosos:
             <div style="display: flex; gap: 4px;">
                 <select id="sel-op-endosos" onchange="filterByEndosos()">
-                    <option value="gte">≥ </option>
+                    <option value="gte">≥</option>
                     <option value="eq">=</option>
                     <option value="lte">≤</option>
                 </select>
@@ -356,13 +384,27 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </select>
         </label>
 
-        <label>Endosatario:
+        <label>
+            <div class="header-sort-row">
+                <span>Endosatario:</span>
+                <div class="sort-btn-group">
+                    <button id="btn-sort-endo-alpha" class="sort-btn active" onclick="setSortMode('endosatario', 'alpha')">A-Z</button>
+                    <button id="btn-sort-endo-count" class="sort-btn" onclick="setSortMode('endosatario', 'count')">N°</button>
+                </div>
+            </div>
             <select id="sel-endosatario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'endosatario')">
                 <option value="">-- Todos --</option>
             </select>
         </label>
 
-        <label>Beneficiario:
+        <label>
+            <div class="header-sort-row">
+                <span>Beneficiario:</span>
+                <div class="sort-btn-group">
+                    <button id="btn-sort-bene-alpha" class="sort-btn active" onclick="setSortMode('beneficiario', 'alpha')">A-Z</button>
+                    <button id="btn-sort-bene-count" class="sort-btn" onclick="setSortMode('beneficiario', 'count')">N°</button>
+                </div>
+            </div>
             <select id="sel-beneficiario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'beneficiario')">
                 <option value="">-- Todos --</option>
             </select>
@@ -423,6 +465,23 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var currentIsolatedValue = null;
         var currentIsolatedType = null;
         var showEdgeLabels = true;
+        
+        // Criterios de ordenamiento predeterminados ('alpha' o 'count')
+        var sortModeEndo = 'alpha';
+        var sortModeBene = 'alpha';
+
+        function setSortMode(type, mode) {{
+            if (type === 'endosatario') {{
+                sortModeEndo = mode;
+                document.getElementById('btn-sort-endo-alpha').classList.toggle('active', mode === 'alpha');
+                document.getElementById('btn-sort-endo-count').classList.toggle('active', mode === 'count');
+            }} else if (type === 'beneficiario') {{
+                sortModeBene = mode;
+                document.getElementById('btn-sort-bene-alpha').classList.toggle('active', mode === 'alpha');
+                document.getElementById('btn-sort-bene-count').classList.toggle('active', mode === 'count');
+            }}
+            updateSelectDropdowns(null);
+        }}
 
         // FUNCIÓN CENTRALIZADA PARA MANTENER LA PALETA ACTIVA
         function getStyledNodes(nodeList) {{
@@ -466,6 +525,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 s.style.borderColor = t.ctrlBorder;
             }});
 
+            var sortBtns = panel.querySelectorAll('.sort-btn');
+            sortBtns.forEach(function(b) {{
+                b.style.color = t.textCtrl;
+            }});
+
             var btn = document.getElementById('btn-reset');
             btn.style.backgroundColor = t.btnBg;
 
@@ -475,10 +539,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             document.documentElement.style.setProperty('--tooltip-border', t.tooltipBorder);
             document.documentElement.style.setProperty('--tooltip-highlight', t.edgeHighlight);
 
-            // Re-pintar nodos con la paleta activa
             nodes.update(getStyledNodes(originalNodes));
 
-            // Re-pintar aristas respetando visibilidad de fechas
             var edgeUpdates = originalEdges.map(function(e) {{
                 return {{
                     id: e.id,
@@ -591,7 +653,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }});
         }});
 
-        // ACTUALIZAR DESPLEGABLES INCLUYENDO CONTADORES DE ENDOSOS Y BONOS
+        // ACTUALIZAR DESPLEGABLES CON ORDENAMIENTO (ALFABÉTICO VS CANTIDAD)
         function updateSelectDropdowns(validNodeIds) {{
             var selBono = document.getElementById('sel-bono');
             var selEndo = document.getElementById('sel-endosatario');
@@ -623,7 +685,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }}
             }});
 
-            // Asegurar que endosatarios sin aristas filtradas mantengan registro si existen
             originalNodes.forEach(function(n) {{
                 if (n.group === 'endosatario' && (!validNodeIds || validNodeIds.has(n.id))) {{
                     if (!(n.id in endoMap)) endoMap[n.id] = 0;
@@ -646,8 +707,28 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }});
 
             bonosList.sort();
-            var sortedEndos = Object.keys(endoMap).sort();
-            var sortedBenes = Object.keys(beneMap).sort();
+
+            // ORDENAMIENTO DINÁMICO DE ENDOSATARIOS
+            var sortedEndos = Object.keys(endoMap);
+            if (sortModeEndo === 'count') {{
+                sortedEndos.sort(function(a, b) {{
+                    var diff = endoMap[b] - endoMap[a];
+                    return diff !== 0 ? diff : a.localeCompare(b);
+                }});
+            }} else {{
+                sortedEndos.sort();
+            }}
+
+            // ORDENAMIENTO DINÁMICO DE BENEFICIARIOS
+            var sortedBenes = Object.keys(beneMap);
+            if (sortModeBene === 'count') {{
+                sortedBenes.sort(function(a, b) {{
+                    var diff = beneMap[b].size - beneMap[a].size;
+                    return diff !== 0 ? diff : a.localeCompare(b);
+                }});
+            }} else {{
+                sortedBenes.sort();
+            }}
 
             selBono.innerHTML = '<option value="">-- Todos --</option>' + 
                 bonosList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
