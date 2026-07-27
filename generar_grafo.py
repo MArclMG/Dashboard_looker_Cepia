@@ -276,7 +276,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             flex-wrap: wrap;
             max-width: 95%;
             transition: all 0.3s ease;
-            user-select: none; /* EVITA SELECCIÓN DE TEXTO EN ZONAS VACÍAS */
         }}
         #filter-panel label {{
             font-weight: bold;
@@ -285,6 +284,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             gap: 4px;
         }}
         
+        /* CONTENEDOR ENCAJONADO PARA FILTRO DE ENDOSOS */
         .filter-group-box {{
             border: 1px solid rgba(150, 150, 150, 0.4);
             border-radius: 6px;
@@ -382,6 +382,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </select>
         </label>
 
+        <!-- FILTRO ENCAJONADO DE N° DE ENDOSOS -->
         <fieldset class="filter-group-box">
             <legend>N° Endosos</legend>
             <div style="display: flex; gap: 4px;">
@@ -400,8 +401,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             <div class="header-sort-row">
                 <span>Endosatario:</span>
                 <div class="sort-btn-group">
-                    <button type="button" id="btn-sort-endo-alpha" class="sort-btn active" onclick="setSortMode('endosatario', 'alpha')">A-Z</button>
-                    <button type="button" id="btn-sort-endo-count" class="sort-btn" onclick="setSortMode('endosatario', 'count')">N°</button>
+                    <button id="btn-sort-endo-alpha" class="sort-btn active" onclick="setSortMode('endosatario', 'alpha')">A-Z</button>
+                    <button id="btn-sort-endo-count" class="sort-btn" onclick="setSortMode('endosatario', 'count')">N°</button>
                 </div>
             </div>
             <select id="sel-endosatario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'endosatario')">
@@ -413,8 +414,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             <div class="header-sort-row">
                 <span>Beneficiario:</span>
                 <div class="sort-btn-group">
-                    <button type="button" id="btn-sort-bene-alpha" class="sort-btn active" onclick="setSortMode('beneficiario', 'alpha')">A-Z</button>
-                    <button type="button" id="btn-sort-bene-count" class="sort-btn" onclick="setSortMode('beneficiario', 'count')">N°</button>
+                    <button id="btn-sort-bene-alpha" class="sort-btn active" onclick="setSortMode('beneficiario', 'alpha')">A-Z</button>
+                    <button id="btn-sort-bene-count" class="sort-btn" onclick="setSortMode('beneficiario', 'count')">N°</button>
                 </div>
             </div>
             <select id="sel-beneficiario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'beneficiario')">
@@ -422,14 +423,15 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </select>
         </label>
 
+        <!-- BONO MOVIDO AL FINAL DE LOS FILTROS POR SER VARIABLE SOLITARIA -->
         <label>Bono (N° Cepia):
             <select id="sel-bono" class="searchable-select" onchange="applyIsolationFilter(this.value, 'bono')">
                 <option value="">-- Todos --</option>
             </select>
         </label>
 
-        <button type="button" id="btn-toggle-labels" style="background-color: #555555;" onclick="toggleEdgeLabels()">Ocultar Fechas</button>
-        <button type="button" id="btn-reset" onclick="resetZoom()">Restablecer Vista</button>
+        <button id="btn-toggle-labels" style="background-color: #555555;" onclick="toggleEdgeLabels()">Ocultar Fechas</button>
+        <button id="btn-reset" onclick="resetZoom()">Restablecer Vista</button>
     </div>
 
     <script>
@@ -487,7 +489,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var sortModeEndo = 'alpha';
         var sortModeBene = 'alpha';
 
-        var currentValidNodeIds = null;
         var navigationHistory = [];
         var isNavigatingBack = false;
 
@@ -515,7 +516,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 document.getElementById('btn-sort-bene-alpha').classList.toggle('active', mode === 'alpha');
                 document.getElementById('btn-sort-bene-count').classList.toggle('active', mode === 'count');
             }}
-            updateSelectDropdowns(currentValidNodeIds);
+            updateSelectDropdowns(null);
         }}
 
         function getStyledNodes(nodeList) {{
@@ -659,7 +660,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             
             document.getElementById('sel-theme').value = currentThemeKey;
             applyThemeStyles(currentThemeKey);
-            currentValidNodeIds = null;
             updateSelectDropdowns(null);
         }});
 
@@ -769,7 +769,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 sortedBenes.map(b => {{
                     var cant = beneMap[b].size;
                     var labelText = `${{b}} (${{cant}} bono${{cant !== 1 ? 's' : ''}})`;
-                    return `<option value="${{e}}">${{labelText}}</option>`;
+                    return `<option value="${{b}}">${{labelText}}</option>`;
                 }}).join('');
 
             selBono.value = bonosList.includes(valBono) ? valBono : "";
@@ -795,7 +795,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             currentIsolatedType = null;
 
             if (val === "ALL") {{
-                currentValidNodeIds = null;
                 nodes.update(getStyledNodes(originalNodes.map(n => ({{ ...n, hidden: false }}))));
                 
                 var t = THEMES[currentThemeKey] || THEMES.dia1;
@@ -815,8 +814,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 validNodeIds.add(e.from);
                 validNodeIds.add(e.to);
             }});
-
-            currentValidNodeIds = validNodeIds;
 
             var t = THEMES[currentThemeKey] || THEMES.dia1;
             edges.update(originalEdges.map(e => ({{
@@ -885,6 +882,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var op = document.getElementById('sel-op-endosos').value;
             var val = document.getElementById('sel-val-endosos').value;
 
+            // RASTREO DE NODOS CON CONEXIONES VISIBLES FINALES (OPCIÓN A)
             var visibleNodeIds = new Set();
 
             var edgeUpdates = originalEdges.map(function(e) {{
@@ -912,6 +910,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }};
             }});
 
+            // OCULTAR CUALQUIER NODO HUÉRFANO SIN CONEXIÓN VISIBLE TRAS COMBINAR FILTROS
             nodes.update(originalNodes.map(n => {{
                 var isExactlySelected = (n.id === selectedValue);
                 var isConnectedAndVisible = visibleNodeIds.has(n.id) || isExactlySelected;
@@ -930,9 +929,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             edges.update(edgeUpdates);
 
-            currentValidNodeIds = visibleNodeIds;
-            updateSelectDropdowns(visibleNodeIds);
-
             var nodesToFit = Array.from(visibleNodeIds);
             if (nodesToFit.length === 0 && selectedValue) {{
                 nodesToFit = [selectedValue];
@@ -941,21 +937,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             network.fit({{ nodes: nodesToFit, animation: {{ duration: 600 }} }});
         }}
 
-        // EVENTO CLICK TOTALMENTE AISLADO DEL PANEL DE FILTROS
         network.on("click", function (params) {{
-            // EVALUACIÓN EXPLÍCITA Y ROBUSTA DEL ELEMENTO ORIGEN
-            var nativeEvt = params.event ? params.event.srcEvent : null;
-            if (nativeEvt) {{
-                var targetElem = nativeEvt.target || nativeEvt.srcElement;
-                if (targetElem) {{
-                    var panel = document.getElementById('filter-panel');
-                    // SI EL CLIC SE HIZO DENTRO DE CUALQUIER PARTE DEL PANEL (ELEMENTO O ZONA NEUTRA)
-                    if (panel && (panel.contains(targetElem) || targetElem.closest('#filter-panel'))) {{
-                        return; // SE CANCELA LA INTERFACING CON EL CANVAS
-                    }}
-                }}
-            }}
-
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
             if (params.nodes.length > 0) {{
@@ -975,7 +957,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
-                // CLIC EN EL ESPACIO VACÍO DEL CANVAS REAL
                 if (navigationHistory.length > 0) {{
                     var previousState = navigationHistory.pop();
                     isNavigatingBack = true;
@@ -1011,7 +992,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             
             currentIsolatedValue = null;
             currentIsolatedType = null;
-            currentValidNodeIds = null;
             navigationHistory = [];
 
             updateSelectDropdowns(null);
