@@ -266,12 +266,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             top: 10px;
             left: 10px;
             z-index: 1000;
-            padding: 12px 16px;
+            padding: 10px 14px;
             border-radius: 8px;
             box-shadow: 0 4px 16px rgba(0,0,0,0.25);
             font-size: 13px;
             display: flex;
-            gap: 10px;
+            gap: 12px;
             align-items: center;
             flex-wrap: wrap;
             max-width: 95%;
@@ -283,6 +283,24 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             flex-direction: column;
             gap: 4px;
         }}
+        
+        /* CONTENEDOR ENCAJONADO PARA FILTRO DE ENDOSOS */
+        .filter-group-box {{
+            border: 1px solid rgba(150, 150, 150, 0.4);
+            border-radius: 6px;
+            padding: 4px 8px 6px 8px;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }}
+        .filter-group-box legend {{
+            font-size: 11px;
+            font-weight: bold;
+            padding: 0 4px;
+            opacity: 0.85;
+        }}
+
         .header-sort-row {{
             display: flex;
             justify-content: space-between;
@@ -323,10 +341,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             border: none;
             cursor: pointer;
             font-weight: bold;
-            margin-top: 16px;
+            margin-top: 14px;
         }}
 
-        /* HOVER TEXT COMPLETAMENTE SÓLIDO */
         div.vis-tooltip {{
             position: absolute !important;
             background-color: transparent !important;
@@ -365,10 +382,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </select>
         </label>
 
-        <label>Endosos:
+        <!-- FILTRO ENCAJONADO DE N° DE ENDOSOS -->
+        <fieldset class="filter-group-box">
+            <legend>N° Endosos</legend>
             <div style="display: flex; gap: 4px;">
                 <select id="sel-op-endosos" onchange="filterByEndosos()">
-                    <option value="gte">≥ </option>
+                    <option value="gte">≥</option>
                     <option value="eq">=</option>
                     <option value="lte">≤</option>
                 </select>
@@ -376,13 +395,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     {opts_num_endosos}
                 </select>
             </div>
-        </label>
-
-        <label>Bono (N° Cepia):
-            <select id="sel-bono" class="searchable-select" onchange="applyIsolationFilter(this.value, 'bono')">
-                <option value="">-- Todos --</option>
-            </select>
-        </label>
+        </fieldset>
 
         <label>
             <div class="header-sort-row">
@@ -406,6 +419,13 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 </div>
             </div>
             <select id="sel-beneficiario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'beneficiario')">
+                <option value="">-- Todos --</option>
+            </select>
+        </label>
+
+        <!-- BONO MOVIDO AL FINAL DE LOS FILTROS POR SER VARIABLE SOLITARIA -->
+        <label>Bono (N° Cepia):
+            <select id="sel-bono" class="searchable-select" onchange="applyIsolationFilter(this.value, 'bono')">
                 <option value="">-- Todos --</option>
             </select>
         </label>
@@ -469,7 +489,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var sortModeEndo = 'alpha';
         var sortModeBene = 'alpha';
 
-        // PILA DE HISTORIAL DE NAVEGACIÓN
         var navigationHistory = [];
         var isNavigatingBack = false;
 
@@ -863,29 +882,22 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var op = document.getElementById('sel-op-endosos').value;
             var val = document.getElementById('sel-val-endosos').value;
 
-            nodes.update(originalNodes.map(n => {{
-                var isActive = activeNodes.has(n.id);
-                var isExactlySelected = (n.id === selectedValue);
-                var groupTheme = t[n.group] || t.bono;
+            // RASTREO DE NODOS CON CONEXIONES VISIBLES FINALES (OPCIÓN A)
+            var visibleNodeIds = new Set();
 
-                return {{
-                    id: n.id,
-                    hidden: !isActive,
-                    borderWidth: isExactlySelected ? 3 : 1.5,
-                    color: {{
-                        background: groupTheme.bg,
-                        border: isExactlySelected ? t.edgeHighlight : groupTheme.border
-                    }}
-                }};
-            }}));
-
-            edges.update(originalEdges.map(e => {{
+            var edgeUpdates = originalEdges.map(function(e) {{
                 var isActive = activeEdges.has(e.id);
                 var passesEndosos = checkEndososCondition(e.cantEndosos, op, val);
+                var isVisible = isActive && passesEndosos;
+
+                if (isVisible) {{
+                    visibleNodeIds.add(e.from);
+                    visibleNodeIds.add(e.to);
+                }}
 
                 return {{
                     id: e.id,
-                    hidden: !isActive || !passesEndosos,
+                    hidden: !isVisible,
                     label: showEdgeLabels ? e.label : "",
                     width: isActive ? 3.5 : 1.5,
                     color: {{ color: isActive ? t.edgeHighlight : t.edgeNormal }},
@@ -896,12 +908,35 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                         strokeColor: t.bgGrafo 
                     }}
                 }};
+            }});
+
+            // OCULTAR CUALQUIER NODO HUÉRFANO SIN CONEXIÓN VISIBLE TRAS COMBINAR FILTROS
+            nodes.update(originalNodes.map(n => {{
+                var isExactlySelected = (n.id === selectedValue);
+                var isConnectedAndVisible = visibleNodeIds.has(n.id) || isExactlySelected;
+                var groupTheme = t[n.group] || t.bono;
+
+                return {{
+                    id: n.id,
+                    hidden: !isConnectedAndVisible,
+                    borderWidth: isExactlySelected ? 3 : 1.5,
+                    color: {{
+                        background: groupTheme.bg,
+                        border: isExactlySelected ? t.edgeHighlight : groupTheme.border
+                    }}
+                }};
             }}));
 
-            network.fit({{ nodes: Array.from(activeNodes), animation: {{ duration: 600 }} }});
+            edges.update(edgeUpdates);
+
+            var nodesToFit = Array.from(visibleNodeIds);
+            if (nodesToFit.length === 0 && selectedValue) {{
+                nodesToFit = [selectedValue];
+            }}
+
+            network.fit({{ nodes: nodesToFit, animation: {{ duration: 600 }} }});
         }}
 
-        // CLICK EN CANVAS CON DESHACER PASO A PASO (PILA DE HISTORIAL)
         network.on("click", function (params) {{
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
@@ -922,7 +957,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
-                // CLICK EN EL FONDO VACÍO: RETROCEDER AL ESTADO ANTERIOR
                 if (navigationHistory.length > 0) {{
                     var previousState = navigationHistory.pop();
                     isNavigatingBack = true;
