@@ -600,9 +600,16 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             return nodeList.map(function(n) {{
                 var groupTheme = t[n.group] || t.bono;
                 var isExactlySelected = (currentIsolatedValue && n.id === currentIsolatedValue);
+                
+                // MANTENER EL ESTADO HIDDEN ACTUAL SI YA FUE EVALUADO
+                var currentVisState = nodes.get(n.id);
+                var isHiddenState = (currentVisState && currentVisState.hidden !== undefined) 
+                    ? currentVisState.hidden 
+                    : (n.hidden !== undefined ? n.hidden : false);
+
                 var styledNode = {{
                     id: n.id,
-                    hidden: n.hidden !== undefined ? n.hidden : false,
+                    hidden: isHiddenState,
                     borderWidth: isExactlySelected ? 3 : 1.5,
                     color: {{
                         background: groupTheme.bg,
@@ -652,27 +659,15 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             document.documentElement.style.setProperty('--tooltip-highlight', t.edgeHighlight);
 
             nodes.update(getStyledNodes(originalNodes));
-
-            var edgeUpdates = originalEdges.map(function(e) {{
-                return {{
-                    id: e.id,
-                    label: showEdgeLabels ? e.label : "",
-                    color: {{ color: t.edgeNormal, highlight: t.edgeHighlight }},
-                    font: {{ 
-                        color: t.edgeText, 
-                        size: showEdgeLabels ? 8 : 0, 
-                        strokeWidth: showEdgeLabels ? 3 : 0, 
-                        strokeColor: t.bgGrafo 
-                    }}
-                }};
-            }});
-            edges.update(edgeUpdates);
         }}
 
         function changeTheme(themeKey) {{
             applyThemeStyles(themeKey);
+            // RE-APLICAR LOS FILTROS SOBRE LAS ARISTAS/NODOS PARA PRESERVAR EL ESTADO DE VISIBILIDAD
             if (currentIsolatedValue) {{
                 applyIsolationFilter(currentIsolatedValue, currentIsolatedType, true);
+            }} else {{
+                filterByEndosos();
             }}
         }}
 
