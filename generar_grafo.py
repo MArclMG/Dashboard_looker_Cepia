@@ -284,7 +284,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             gap: 4px;
         }}
         
-        /* CONTENEDOR ENCAJONADO PARA FILTRO DE ENDOSOS */
         .filter-group-box {{
             border: 1px solid rgba(150, 150, 150, 0.4);
             border-radius: 6px;
@@ -382,7 +381,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </select>
         </label>
 
-        <!-- FILTRO ENCAJONADO DE N° DE ENDOSOS -->
         <fieldset class="filter-group-box">
             <legend>N° Endosos</legend>
             <div style="display: flex; gap: 4px;">
@@ -423,7 +421,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </select>
         </label>
 
-        <!-- BONO MOVIDO AL FINAL DE LOS FILTROS POR SER VARIABLE SOLITARIA -->
         <label>Bono (N° Cepia):
             <select id="sel-bono" class="searchable-select" onchange="applyIsolationFilter(this.value, 'bono')">
                 <option value="">-- Todos --</option>
@@ -491,6 +488,16 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
         var navigationHistory = [];
         var isNavigatingBack = false;
+
+        // AISLAMIENTO DE EVENTOS EN EL PANEL DE CONTROL (PASO 4 B)
+        var panelElem = document.getElementById('filter-panel');
+        if (panelElem) {{
+            ['click', 'dblclick', 'mousedown', 'mouseup', 'contextmenu'].forEach(function(evtName) {{
+                panelElem.addEventListener(evtName, function(e) {{
+                    e.stopPropagation();
+                }});
+            }});
+        }}
 
         function pushNavigationState() {{
             if (isNavigatingBack) return;
@@ -882,7 +889,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var op = document.getElementById('sel-op-endosos').value;
             var val = document.getElementById('sel-val-endosos').value;
 
-            // RASTREO DE NODOS CON CONEXIONES VISIBLES FINALES (OPCIÓN A)
             var visibleNodeIds = new Set();
 
             var edgeUpdates = originalEdges.map(function(e) {{
@@ -910,7 +916,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }};
             }});
 
-            // OCULTAR CUALQUIER NODO HUÉRFANO SIN CONEXIÓN VISIBLE TRAS COMBINAR FILTROS
             nodes.update(originalNodes.map(n => {{
                 var isExactlySelected = (n.id === selectedValue);
                 var isConnectedAndVisible = visibleNodeIds.has(n.id) || isExactlySelected;
@@ -928,6 +933,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }}));
 
             edges.update(edgeUpdates);
+
+            // CORRECCIÓN PASO 4 A: REFRESCAR DESPLEGABLES CON EL SUBCONJUNTO ACTUAL
+            updateSelectDropdowns(visibleNodeIds);
 
             var nodesToFit = Array.from(visibleNodeIds);
             if (nodesToFit.length === 0 && selectedValue) {{
