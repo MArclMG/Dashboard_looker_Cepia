@@ -368,7 +368,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         <label>Endosos:
             <div style="display: flex; gap: 4px;">
                 <select id="sel-op-endosos" onchange="filterByEndosos()">
-                    <option value="gte">≥</option>
+                    <option value="gte">≥ </option>
                     <option value="eq">=</option>
                     <option value="lte">≤</option>
                 </select>
@@ -466,9 +466,26 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var currentIsolatedType = null;
         var showEdgeLabels = true;
         
-        // Criterios de ordenamiento predeterminados ('alpha' o 'count')
         var sortModeEndo = 'alpha';
         var sortModeBene = 'alpha';
+
+        // PILA DE HISTORIAL DE NAVEGACIÓN
+        var navigationHistory = [];
+        var isNavigatingBack = false;
+
+        function pushNavigationState() {{
+            if (isNavigatingBack) return;
+            var currentState = {{
+                val: currentIsolatedValue,
+                type: currentIsolatedType
+            }};
+            
+            var lastState = navigationHistory[navigationHistory.length - 1];
+            if (!lastState || lastState.val !== currentState.val || lastState.type !== currentState.type) {{
+                navigationHistory.push(currentState);
+                if (navigationHistory.length > 25) navigationHistory.shift();
+            }}
+        }}
 
         function setSortMode(type, mode) {{
             if (type === 'endosatario') {{
@@ -483,7 +500,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             updateSelectDropdowns(null);
         }}
 
-        // FUNCIÓN CENTRALIZADA PARA MANTENER LA PALETA ACTIVA
         function getStyledNodes(nodeList) {{
             var t = THEMES[currentThemeKey] || THEMES.dia1;
             return nodeList.map(function(n) {{
@@ -503,7 +519,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }});
         }}
 
-        // APLICAR TEMA GLOBALMENTE
         function applyThemeStyles(themeKey) {{
             var t = THEMES[themeKey] || THEMES.dia1;
             currentThemeKey = themeKey;
@@ -533,7 +548,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var btn = document.getElementById('btn-reset');
             btn.style.backgroundColor = t.btnBg;
 
-            // Inyectar variables CSS para que los Tooltips nazcan 100% opacos
             document.documentElement.style.setProperty('--tooltip-bg', t.tooltipBg);
             document.documentElement.style.setProperty('--tooltip-text', t.tooltipText);
             document.documentElement.style.setProperty('--tooltip-border', t.tooltipBorder);
@@ -560,11 +574,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         function changeTheme(themeKey) {{
             applyThemeStyles(themeKey);
             if (currentIsolatedValue) {{
-                applyIsolationFilter(currentIsolatedValue, currentIsolatedType);
+                applyIsolationFilter(currentIsolatedValue, currentIsolatedType, true);
             }}
         }}
 
-        // BOTÓN MOSTRAR/OCULTAR FECHAS EN ARISTAS
         function toggleEdgeLabels() {{
             showEdgeLabels = !showEdgeLabels;
             var btn = document.getElementById('btn-toggle-labels');
@@ -587,7 +600,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             edges.update(edgeUpdates);
         }}
 
-        // PARSER TOOLTIP DE NODOS Y ARISTAS
         network.once("beforeDrawing", function() {{
             var allNodes = nodes.get();
             var nodeUpdates = [];
@@ -632,7 +644,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             updateSelectDropdowns(null);
         }});
 
-        // BÚSQUEDA RÁPIDA EN DESPLEGABLES
         document.querySelectorAll('.searchable-select').forEach(function(select) {{
             var searchStr = "";
             var searchTimeout;
@@ -653,7 +664,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }});
         }});
 
-        // ACTUALIZAR DESPLEGABLES CON ORDENAMIENTO (ALFABÉTICO VS CANTIDAD)
         function updateSelectDropdowns(validNodeIds) {{
             var selBono = document.getElementById('sel-bono');
             var selEndo = document.getElementById('sel-endosatario');
@@ -677,7 +687,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }}
             }});
 
-            // Contar endosos (conexiones entrantes) por endosatario
             activeEdges.forEach(function(e) {{
                 var toNode = originalNodes.find(n => n.id === e.to);
                 if (toNode && toNode.group === 'endosatario' && (!validNodeIds || validNodeIds.has(toNode.id))) {{
@@ -691,7 +700,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 }}
             }});
 
-            // Contar Bonos asignados a cada beneficiario
             activeEdges.forEach(function(e) {{
                 var toNode = originalNodes.find(n => n.id === e.to);
                 if (toNode && toNode.group === 'beneficiario' && (!validNodeIds || validNodeIds.has(toNode.id))) {{
@@ -708,7 +716,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             bonosList.sort();
 
-            // ORDENAMIENTO DINÁMICO DE ENDOSATARIOS
             var sortedEndos = Object.keys(endoMap);
             if (sortModeEndo === 'count') {{
                 sortedEndos.sort(function(a, b) {{
@@ -719,7 +726,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 sortedEndos.sort();
             }}
 
-            // ORDENAMIENTO DINÁMICO DE BENEFICIARIOS
             var sortedBenes = Object.keys(beneMap);
             if (sortModeBene === 'count') {{
                 sortedBenes.sort(function(a, b) {{
@@ -807,12 +813,20 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             updateSelectDropdowns(validNodeIds);
         }}
 
-        function applyIsolationFilter(selectedValue, type) {{
+        function applyIsolationFilter(selectedValue, type, skipHistory) {{
+            if (!skipHistory) {{
+                pushNavigationState();
+            }}
+
             var t = THEMES[currentThemeKey] || THEMES.dia1;
 
             if (type !== 'bono') document.getElementById('sel-bono').value = "";
             if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
             if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
+
+            if (type === 'bono') document.getElementById('sel-bono').value = selectedValue || "";
+            if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedValue || "";
+            if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedValue || "";
 
             if (!selectedValue) {{
                 filterByEndosos();
@@ -887,7 +901,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             network.fit({{ nodes: Array.from(activeNodes), animation: {{ duration: 600 }} }});
         }}
 
-        // DESELECCIÓN EN CANVAS Y RETORNO SEGURO A LA PALETA
+        // CLICK EN CANVAS CON DESHACER PASO A PASO (PILA DE HISTORIAL)
         network.on("click", function (params) {{
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
@@ -897,14 +911,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
                 if (clickedNode) {{
                     var type = clickedNode.group;
-                    if (currentIsolatedValue === selectedNodeId && currentIsolatedType === type) {{
-                        applyIsolationFilter("", type);
-                        return;
-                    }}
-                    if (type === 'bono') document.getElementById('sel-bono').value = selectedNodeId;
-                    else if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedNodeId;
-                    else if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedNodeId;
-
                     applyIsolationFilter(selectedNodeId, type);
                 }}
             }} else if (params.edges.length > 0) {{
@@ -913,21 +919,33 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
                 if (clickedEdge && clickedEdge.bono) {{
                     var bonoId = clickedEdge.bono;
-                    if (currentIsolatedValue === bonoId && currentIsolatedType === 'bono') {{
-                        applyIsolationFilter("", 'bono');
-                        return;
-                    }}
-                    document.getElementById('sel-bono').value = bonoId;
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
-                currentIsolatedValue = null;
-                currentIsolatedType = null;
-                document.getElementById('sel-bono').value = "";
-                document.getElementById('sel-endosatario').value = "";
-                document.getElementById('sel-beneficiario').value = "";
-
-                filterByEndosos();
+                // CLICK EN EL FONDO VACÍO: RETROCEDER AL ESTADO ANTERIOR
+                if (navigationHistory.length > 0) {{
+                    var previousState = navigationHistory.pop();
+                    isNavigatingBack = true;
+                    
+                    if (previousState.val) {{
+                        applyIsolationFilter(previousState.val, previousState.type, true);
+                    }} else {{
+                        currentIsolatedValue = null;
+                        currentIsolatedType = null;
+                        document.getElementById('sel-bono').value = "";
+                        document.getElementById('sel-endosatario').value = "";
+                        document.getElementById('sel-beneficiario').value = "";
+                        filterByEndosos();
+                    }}
+                    isNavigatingBack = false;
+                }} else {{
+                    currentIsolatedValue = null;
+                    currentIsolatedType = null;
+                    document.getElementById('sel-bono').value = "";
+                    document.getElementById('sel-endosatario').value = "";
+                    document.getElementById('sel-beneficiario').value = "";
+                    filterByEndosos();
+                }}
             }}
         }});
 
@@ -940,6 +958,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             
             currentIsolatedValue = null;
             currentIsolatedType = null;
+            navigationHistory = [];
 
             updateSelectDropdowns(null);
 
