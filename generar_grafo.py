@@ -486,9 +486,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var sortModeEndo = 'alpha';
         var sortModeBene = 'alpha';
 
-        // PERSISTENCIA DEL SUBCONJUNTO VALIDO ACTUAL
-        var currentValidNodeIds = null;
-
         var navigationHistory = [];
         var isNavigatingBack = false;
 
@@ -507,17 +504,37 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         }}
 
         function setSortMode(type, mode) {{
+            var selectId = (type === 'endosatario') ? 'sel-endosatario' : 'sel-beneficiario';
+            var selectElem = document.getElementById(selectId);
+            if (!selectElem) return;
+
             if (type === 'endosatario') {{
                 sortModeEndo = mode;
                 document.getElementById('btn-sort-endo-alpha').classList.toggle('active', mode === 'alpha');
                 document.getElementById('btn-sort-endo-count').classList.toggle('active', mode === 'count');
-            }} else if (type === 'beneficiario') {{
+            }} else {{
                 sortModeBene = mode;
                 document.getElementById('btn-sort-bene-alpha').classList.toggle('active', mode === 'alpha');
                 document.getElementById('btn-sort-bene-count').classList.toggle('active', mode === 'count');
             }}
-            // REORDENAR ÚNICAMENTE CON EL SUBCONJUNTO ACTUALMENTE FILTRADO
-            updateSelectDropdowns(currentValidNodeIds);
+
+            var currentVal = selectElem.value;
+            var options = Array.from(selectElem.options).filter(opt => opt.value !== "");
+
+            options.sort(function(a, b) {{
+                if (mode === 'count') {{
+                    var countA = parseInt((a.text.match(/\((\d+)\s+/)||[])[1] || 0, 10);
+                    var countB = parseInt((b.text.match(/\((\d+)\s+/)||[])[1] || 0, 10);
+                    var diff = countB - countA;
+                    return diff !== 0 ? diff : a.text.localeCompare(b.text);
+                }} else {{
+                    return a.text.localeCompare(b.text);
+                }}
+            }});
+
+            selectElem.innerHTML = '<option value="">-- Todos --</option>';
+            options.forEach(opt => selectElem.appendChild(opt));
+            selectElem.value = currentVal;
         }}
 
         function getStyledNodes(nodeList) {{
@@ -661,7 +678,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             
             document.getElementById('sel-theme').value = currentThemeKey;
             applyThemeStyles(currentThemeKey);
-            currentValidNodeIds = null;
             updateSelectDropdowns(null);
         }});
 
@@ -767,7 +783,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     return `<option value="${{e}}">${{labelText}}</option>`;
                 }}).join('');
 
-            // FIX: Corregido `${e}` por `${b}` para la lista de beneficiarios
             selBene.innerHTML = '<option value="">-- Todos --</option>' + 
                 sortedBenes.map(b => {{
                     var cant = beneMap[b].size;
@@ -798,7 +813,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             currentIsolatedType = null;
 
             if (val === "ALL") {{
-                currentValidNodeIds = null;
                 nodes.update(getStyledNodes(originalNodes.map(n => ({{ ...n, hidden: false }}))));
                 
                 var t = THEMES[currentThemeKey] || THEMES.dia1;
@@ -818,8 +832,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 validNodeIds.add(e.from);
                 validNodeIds.add(e.to);
             }});
-
-            currentValidNodeIds = validNodeIds;
 
             var t = THEMES[currentThemeKey] || THEMES.dia1;
             edges.update(originalEdges.map(e => ({{
@@ -933,7 +945,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             edges.update(edgeUpdates);
 
-            currentValidNodeIds = visibleNodeIds;
             updateSelectDropdowns(visibleNodeIds);
 
             var nodesToFit = Array.from(visibleNodeIds);
@@ -944,17 +955,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             network.fit({{ nodes: nodesToFit, animation: {{ duration: 600 }} }});
         }}
 
-        // EVENTO CLICK AISLADO PARA EL CANVAS
         network.on("click", function (params) {{
-            var nativeEvt = params.event ? params.event.srcEvent : null;
-            if (nativeEvt) {{
-                var targetElem = nativeEvt.target || nativeEvt.srcElement;
-                var panelContainer = document.getElementById('filter-panel');
-                if (targetElem && panelContainer && panelContainer.contains(targetElem)) {{
-                    return; // IGNORAR SI EL CLIC OCURRIÓ DENTRO DEL PANEL
-                }}
-            }}
-
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
             if (params.nodes.length > 0) {{
@@ -1009,7 +1010,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             
             currentIsolatedValue = null;
             currentIsolatedType = null;
-            currentValidNodeIds = null;
             navigationHistory = [];
 
             updateSelectDropdowns(null);
