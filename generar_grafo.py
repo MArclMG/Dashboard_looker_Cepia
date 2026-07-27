@@ -542,7 +542,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             return nodeList.map(function(n) {{
                 var groupTheme = t[n.group] || t.bono;
                 var isExactlySelected = (currentIsolatedValue && n.id === currentIsolatedValue);
-                return {{
+                var styledNode = {{
                     id: n.id,
                     hidden: n.hidden !== undefined ? n.hidden : false,
                     borderWidth: isExactlySelected ? 3 : 1.5,
@@ -553,6 +553,9 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     }},
                     font: {{ color: groupTheme.text, face: 'Arial' }}
                 }};
+                if (n.x !== undefined) styledNode.x = n.x;
+                if (n.y !== undefined) styledNode.y = n.y;
+                return styledNode;
             }});
         }}
 
@@ -1014,10 +1017,15 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             updateSelectDropdowns(null);
 
+            // REPOBLAR DE FORMA EXPLÍCITA LAS POSICIONES INICIALES DE CADA NODO EN EL CANVAS
+            Object.keys(initialPositions).forEach(function(nodeId) {{
+                if (initialPositions[nodeId]) {{
+                    network.moveNode(nodeId, initialPositions[nodeId].x, initialPositions[nodeId].y);
+                }}
+            }});
+
             nodes.update(getStyledNodes(originalNodes.map(n => ({{
                 ...n,
-                x: initialPositions[n.id] ? initialPositions[n.id].x : undefined,
-                y: initialPositions[n.id] ? initialPositions[n.id].y : undefined,
                 hidden: false
             }}))));
 
