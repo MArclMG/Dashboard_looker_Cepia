@@ -123,7 +123,7 @@ def main():
     }
     """)
 
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         cepia_id = normalizar_texto(row.get('N° Cepia', ''))
         beneficiario_id = normalizar_texto(row.get('Beneficiario', ''))
         if not cepia_id: 
@@ -131,12 +131,23 @@ def main():
 
         i_temp = 1
         num_endosos_bono = 0
+        list_endosatarios = []
+        list_fechas = []
+
         while True:
-            col_check = next((c for c in df.columns if c.strip().lower() == f'endosatario_{i_temp}'), None)
-            if not col_check:
+            col_endosatario = next((c for c in df.columns if c.strip().lower() == f'endosatario_{i_temp}'), None)
+            col_fecha = next((c for c in df.columns if c.strip().lower() == f'endoso_fecha_{i_temp}'), None)
+
+            if not col_endosatario:
                 break
-            if normalizar_texto(row.get(col_check, '')):
+
+            val_endo = normalizar_texto(row.get(col_endosatario, ''))
+            fecha_val = str(row.get(col_fecha, '')).strip() if col_fecha else ""
+
+            if val_endo:
                 num_endosos_bono += 1
+                list_endosatarios.append(val_endo)
+                list_fechas.append(fecha_val)
             i_temp += 1
 
         title_bono = f"<b>BONO (N° CEPIA):</b> {cepia_id}<br><b>Endosos Total:</b> {num_endosos_bono}<br><b>Beneficiario Final:</b> {beneficiario_id}"
@@ -165,57 +176,47 @@ def main():
                 font={"size": 9, "face": "Arial"}
             )
 
-        nodo_actual = cepia_id
-        i = 1
-        
-        while True:
-            col_endosatario = next((c for c in df.columns if c.strip().lower() == f'endosatario_{i}'), None)
-            col_fecha = next((c for c in df.columns if c.strip().lower() == f'endoso_fecha_{i}'), None)
+        for endosatario_id in list_endosatarios:
+            label_endo = acortar_texto(endosatario_id, 14)
+            endosos_recibidos = in_degree_counter.get(endosatario_id, 1)
+            size_dinamico = min(12 + (endosos_recibidos * 2), 26)
+            title_endo = f"<b>ENDOSATARIO:</b> {endosatario_id}<br><b>Endosos Recibidos:</b> {endosos_recibidos}"
 
-            if not col_endosatario:
-                break
+            net.add_node(
+                endosatario_id, 
+                label=label_endo, 
+                title=title_endo, 
+                group="endosatario",
+                shape="box",
+                size=size_dinamico,
+                widthConstraint={"maximum": 120},
+                font={"size": 9, "face": "Arial"}
+            )
 
-            endosatario_id = normalizar_texto(row.get(col_endosatario, ''))
-            fecha_val = str(row.get(col_fecha, '')).strip() if col_fecha else ""
-
-            if endosatario_id:
-                label_endo = acortar_texto(endosatario_id, 14)
-                endosos_recibidos = in_degree_counter.get(endosatario_id, 1)
-                size_dinamico = min(12 + (endosos_recibidos * 2), 26)
-
-                title_endo = f"<b>ENDOSATARIO:</b> {endosatario_id}<br><b>Endosos Recibidos:</b> {endosos_recibidos}"
-
-                net.add_node(
-                    endosatario_id, 
-                    label=label_endo, 
-                    title=title_endo, 
-                    group="endosatario",
-                    shape="box",
-                    size=size_dinamico,
-                    widthConstraint={"maximum": 120},
-                    font={"size": 9, "face": "Arial"}
-                )
-                
-                label_arista = f"E{i}: {fecha_val}" if fecha_val else f"Endoso {i}"
-                
-                net.add_edge(
-                    nodo_actual, 
-                    endosatario_id, 
-                    label=label_arista, 
-                    title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
-                    width=1.5,
-                    bono=cepia_id,
-                    cantEndosos=num_endosos_bono,
-                    arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
-                    smooth={"type": "curvedCW", "roundness": 0.25},
-                    font={"size": 8, "align": "middle", "color": "#777777"}
-                )
-                nodo_actual = endosatario_id
-            i += 1
+        # --- ESTRUCTURA 1: CRONOLÓGICA (Bono -> Endosatarios -> Beneficiario) ---
+        nodo_actual_c = cepia_id
+        for i, endosatario_id in enumerate(list_endosatarios, 1):
+            fecha_val = list_fechas[i-1]
+            label_arista = f"E{i}: {fecha_val}" if fecha_val else f"Endoso {i}"
+            
+            net.add_edge(
+                nodo_actual_c, 
+                endosatario_id, 
+                label=label_arista, 
+                title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
+                width=1.5,
+                bono=cepia_id,
+                cantEndosos=num_endosos_bono,
+                flowMode="cronologico",
+                arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
+                smooth={"type": "curvedCW", "roundness": 0.25},
+                font={"size": 8, "align": "middle", "color": "#777777"}
+            )
+            nodo_actual_c = endosatario_id
 
         if beneficiario_id:
             net.add_edge(
-                nodo_actual, 
+                nodo_actual_c, 
                 beneficiario_id, 
                 label="Asignado a", 
                 title=f"Bono: {cepia_id} | Beneficiario Final", 
@@ -223,10 +224,50 @@ def main():
                 dashes=True,
                 bono=cepia_id,
                 cantEndosos=num_endosos_bono,
+                flowMode="cronologico",
                 arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
                 smooth={"type": "curvedCW", "roundness": 0.2},
                 font={"size": 8, "align": "middle", "color": "#777777"}
             )
+
+        # --- ESTRUCTURA 2: SEGÚN TABLA (Bono -> Beneficiario -> Endosatarios) ---
+        if beneficiario_id:
+            net.add_edge(
+                cepia_id, 
+                beneficiario_id, 
+                label="Adjudicado a", 
+                title=f"Bono: {cepia_id} | Titular Beneficiario", 
+                width=1.5,
+                dashes=True,
+                bono=cepia_id,
+                cantEndosos=num_endosos_bono,
+                flowMode="tabla",
+                arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
+                smooth={"type": "curvedCW", "roundness": 0.2},
+                font={"size": 8, "align": "middle", "color": "#777777"}
+            )
+            nodo_actual_t = beneficiario_id
+        else:
+            nodo_actual_t = cepia_id
+
+        for i, endosatario_id in enumerate(list_endosatarios, 1):
+            fecha_val = list_fechas[i-1]
+            label_arista = f"E{i}: {fecha_val}" if fecha_val else f"Endoso {i}"
+            
+            net.add_edge(
+                nodo_actual_t, 
+                endosatario_id, 
+                label=label_arista, 
+                title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
+                width=1.5,
+                bono=cepia_id,
+                cantEndosos=num_endosos_bono,
+                flowMode="tabla",
+                arrows={"to": {"enabled": True, "scaleFactor": 1.0}},
+                smooth={"type": "curvedCW", "roundness": 0.25},
+                font={"size": 8, "align": "middle", "color": "#777777"}
+            )
+            nodo_actual_t = endosatario_id
 
     os.makedirs("docs", exist_ok=True)
     output_path = os.path.join("docs", "index.html")
@@ -372,6 +413,13 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
     </style>
 
     <div id="filter-panel">
+        <label>Estructura de Flujo:
+            <select id="sel-flow-mode" onchange="switchFlowMode(this.value)">
+                <option value="cronologico">Trazabilidad Financiera (Bono ➔ Endosos ➔ Beneficiario)</option>
+                <option value="tabla">Jerarquía Administrativa (Bono ➔ Beneficiario ➔ Endosos)</option>
+            </select>
+        </label>
+
         <label>Tema:
             <select id="sel-theme" onchange="changeTheme(this.value)">
                 <option value="dia1">Día · Salvia / Terracota / Crema (Pastel)</option>
@@ -476,6 +524,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         }};
 
         var currentThemeKey = localStorage.getItem('selectedTheme') || 'dia1';
+        var currentFlowMode = 'cronologico';
         var originalNodes = [];
         var originalEdges = [];
         var initialPositions = {{}};
@@ -488,6 +537,15 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
         var navigationHistory = [];
         var isNavigatingBack = false;
+
+        function switchFlowMode(newMode) {{
+            currentFlowMode = newMode;
+            if (currentIsolatedValue) {{
+                applyIsolationFilter(currentIsolatedValue, currentIsolatedType, true);
+            }} else {{
+                filterByEndosos();
+            }}
+        }}
 
         function pushNavigationState() {{
             if (isNavigatingBack) return;
@@ -681,7 +739,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             
             document.getElementById('sel-theme').value = currentThemeKey;
             applyThemeStyles(currentThemeKey);
-            updateSelectDropdowns(null);
+            filterByEndosos();
         }});
 
         document.querySelectorAll('.searchable-select').forEach(function(select) {{
@@ -717,7 +775,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var endoMap = {{}}; 
             var beneMap = {{}};
 
-            var activeEdges = originalEdges.filter(e => !validNodeIds || (validNodeIds.has(e.from) && validNodeIds.has(e.to)));
+            var activeEdges = originalEdges.filter(e => e.flowMode === currentFlowMode && (!validNodeIds || (validNodeIds.has(e.from) && validNodeIds.has(e.to))));
 
             originalNodes.forEach(function(n) {{
                 if (!validNodeIds || validNodeIds.has(n.id)) {{
@@ -815,21 +873,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             currentIsolatedValue = null;
             currentIsolatedType = null;
 
-            if (val === "ALL") {{
-                nodes.update(getStyledNodes(originalNodes.map(n => ({{ ...n, hidden: false }}))));
-                
-                var t = THEMES[currentThemeKey] || THEMES.dia1;
-                edges.update(originalEdges.map(e => ({{ 
-                    id: e.id, 
-                    hidden: false,
-                    label: showEdgeLabels ? e.label : "",
-                    font: {{ size: showEdgeLabels ? 8 : 0, color: t.edgeText, strokeWidth: showEdgeLabels ? 3 : 0, strokeColor: t.bgGrafo }}
-                }})));
-                updateSelectDropdowns(null);
-                return;
-            }}
-
-            var validEdges = originalEdges.filter(e => checkEndososCondition(e.cantEndosos, op, val));
+            var validEdges = originalEdges.filter(e => e.flowMode === currentFlowMode && checkEndososCondition(e.cantEndosos, op, val));
             var validNodeIds = new Set();
             validEdges.forEach(function(e) {{
                 validNodeIds.add(e.from);
@@ -839,7 +883,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var t = THEMES[currentThemeKey] || THEMES.dia1;
             edges.update(originalEdges.map(e => ({{
                 id: e.id,
-                hidden: !checkEndososCondition(e.cantEndosos, op, val),
+                hidden: !(e.flowMode === currentFlowMode && checkEndososCondition(e.cantEndosos, op, val)),
                 label: showEdgeLabels ? e.label : "",
                 font: {{ size: showEdgeLabels ? 8 : 0, color: t.edgeText, strokeWidth: showEdgeLabels ? 3 : 0, strokeColor: t.bgGrafo }}
             }})));
@@ -886,14 +930,14 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }} else {{
                 activeNodes.add(selectedValue);
                 originalEdges.forEach(function(edge) {{
-                    if (edge.from === selectedValue || edge.to === selectedValue) {{
+                    if (edge.flowMode === currentFlowMode && (edge.from === selectedValue || edge.to === selectedValue)) {{
                         if (edge.bono) activeBonos.add(edge.bono);
                     }}
                 }});
             }}
 
             originalEdges.forEach(function(edge) {{
-                if (activeBonos.has(edge.bono)) {{
+                if (edge.flowMode === currentFlowMode && activeBonos.has(edge.bono)) {{
                     activeEdges.add(edge.id);
                     activeNodes.add(edge.from);
                     activeNodes.add(edge.to);
@@ -906,9 +950,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var visibleNodeIds = new Set();
 
             var edgeUpdates = originalEdges.map(function(e) {{
+                var isCorrectMode = (e.flowMode === currentFlowMode);
                 var isActive = activeEdges.has(e.id);
                 var passesEndosos = checkEndososCondition(e.cantEndosos, op, val);
-                var isVisible = isActive && passesEndosos;
+                var isVisible = isCorrectMode && isActive && passesEndosos;
 
                 if (isVisible) {{
                     visibleNodeIds.add(e.from);
@@ -1015,28 +1060,13 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             currentIsolatedType = null;
             navigationHistory = [];
 
-            updateSelectDropdowns(null);
-
-            // REPOBLAR DE FORMA EXPLÍCITA LAS POSICIONES INICIALES DE CADA NODO EN EL CANVAS
             Object.keys(initialPositions).forEach(function(nodeId) {{
                 if (initialPositions[nodeId]) {{
                     network.moveNode(nodeId, initialPositions[nodeId].x, initialPositions[nodeId].y);
                 }}
             }});
 
-            nodes.update(getStyledNodes(originalNodes.map(n => ({{
-                ...n,
-                hidden: false
-            }}))));
-
-            var t = THEMES[currentThemeKey] || THEMES.dia1;
-            edges.update(originalEdges.map(e => ({{ 
-                id: e.id, 
-                hidden: false, 
-                label: showEdgeLabels ? e.label : "",
-                font: {{ size: showEdgeLabels ? 8 : 0, color: t.edgeText, strokeWidth: showEdgeLabels ? 3 : 0, strokeColor: t.bgGrafo }}
-            }})));
-
+            filterByEndosos();
             applyThemeStyles(currentThemeKey);
             network.fit({{ animation: {{ duration: 600 }} }});
             network.unselectAll();
