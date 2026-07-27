@@ -489,13 +489,16 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var navigationHistory = [];
         var isNavigatingBack = false;
 
-        // AISLAMIENTO DE EVENTOS EN EL PANEL DE CONTROL (PASO 4 B)
+        // BLINDAJE 1: BLOQUEO ABSOLUTO DE EVENTOS EN EL PANEL
         var panelElem = document.getElementById('filter-panel');
         if (panelElem) {{
-            ['click', 'dblclick', 'mousedown', 'mouseup', 'contextmenu'].forEach(function(evtName) {{
+            ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu'].forEach(function(evtName) {{
                 panelElem.addEventListener(evtName, function(e) {{
                     e.stopPropagation();
-                }});
+                    if (e.stopImmediatePropagation) {{
+                        e.stopImmediatePropagation();
+                    }}
+                }}, true);
             }});
         }}
 
@@ -933,8 +936,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }}));
 
             edges.update(edgeUpdates);
-
-            // CORRECCIÓN PASO 4 A: REFRESCAR DESPLEGABLES CON EL SUBCONJUNTO ACTUAL
             updateSelectDropdowns(visibleNodeIds);
 
             var nodesToFit = Array.from(visibleNodeIds);
@@ -945,7 +946,16 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             network.fit({{ nodes: nodesToFit, animation: {{ duration: 600 }} }});
         }}
 
+        // BLINDAJE 2: VERIFICACIÓN EXPLÍCITA DE TARGET DENTRO DE VIS.JS
         network.on("click", function (params) {{
+            var nativeEvt = params.event ? params.event.srcEvent : null;
+            if (nativeEvt) {{
+                var targetElem = nativeEvt.target || nativeEvt.srcElement;
+                if (targetElem && document.getElementById('filter-panel').contains(targetElem)) {{
+                    return; // ABORTAR SI EL CLIC OCURRIÓ EN EL PANEL
+                }}
+            }}
+
             setTimeout(function() {{ network.unselectAll(); }}, 50);
 
             if (params.nodes.length > 0) {{
@@ -965,6 +975,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
+                // RETROCEDER SOLO SI EL CLIC FUE DENTRO DEL CANVAS REAL
                 if (navigationHistory.length > 0) {{
                     var previousState = navigationHistory.pop();
                     isNavigatingBack = true;
