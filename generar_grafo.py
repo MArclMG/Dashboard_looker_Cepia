@@ -307,7 +307,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             top: 10px;
             left: 10px;
             z-index: 1000;
-            padding: 10px 14px;
+            padding: 10px 54px 10px 14px;
             border-radius: 8px;
             box-shadow: 0 4px 16px rgba(0,0,0,0.25);
             font-size: 13px;
@@ -316,7 +316,76 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             align-items: center;
             flex-wrap: wrap;
             max-width: 95%;
-            transition: all 0.3s ease;
+            max-height: calc(100vh - 20px);
+            overflow-y: auto;
+            box-sizing: border-box;
+            transition: width 0.25s ease, height 0.25s ease, padding 0.25s ease, background-color 0.2s ease;
+        }}
+
+        /* =========================================================
+           PANEL PLEGABLE
+           ========================================================= */
+        #btn-toggle-panel {{
+            position: absolute;
+            top: 7px;
+            right: 7px;
+            width: 34px;
+            height: 34px;
+            padding: 0 !important;
+            margin: 0 !important;
+            border-radius: 7px !important;
+            border: none !important;
+            cursor: pointer;
+            font-size: 18px !important;
+            font-weight: bold;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1002;
+        }}
+
+        #filter-panel.collapsed {{
+            width: 42px;
+            height: 42px;
+            min-width: 42px;
+            min-height: 42px;
+            padding: 0;
+            gap: 0;
+            overflow: hidden;
+            flex-wrap: nowrap;
+        }}
+
+        #filter-panel.collapsed > *:not(#btn-toggle-panel) {{
+            display: none !important;
+        }}
+
+        #filter-panel.collapsed #btn-toggle-panel {{
+            top: 4px;
+            right: 4px;
+        }}
+
+        /* En iframes angostos (por ejemplo Looker Studio),
+           el panel abierto se ordena verticalmente. */
+        @media (max-width: 800px) {{
+            #filter-panel:not(.collapsed) {{
+                flex-direction: column;
+                align-items: stretch;
+                width: min(320px, calc(100vw - 20px));
+                max-width: min(320px, calc(100vw - 20px));
+                flex-wrap: nowrap;
+            }}
+
+            #filter-panel:not(.collapsed) label,
+            #filter-panel:not(.collapsed) fieldset {{
+                width: 100%;
+                box-sizing: border-box;
+            }}
+
+            #filter-panel:not(.collapsed) select {{
+                width: 100%;
+                box-sizing: border-box;
+            }}
         }}
         #filter-panel label {{
             font-weight: bold;
@@ -412,7 +481,15 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         }}
     </style>
 
-    <div id="filter-panel">
+    <div id="filter-panel" class="collapsed">
+        <button
+            type="button"
+            id="btn-toggle-panel"
+            onclick="toggleFilterPanel()"
+            title="Mostrar controles"
+            aria-label="Mostrar u ocultar controles"
+            aria-expanded="false">☰</button>
+
         <label>Estructura de Flujo:
             <select id="sel-flow-mode" onchange="switchFlowMode(this.value)">
                 <option value="cronologico">Trazabilidad Financiera (Bono ➔ Endosos ➔ Beneficiario)</option>
@@ -525,6 +602,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
         var currentThemeKey = localStorage.getItem('selectedTheme') || 'dia1';
         var currentFlowMode = 'cronologico';
+
+        // El panel parte plegado la primera vez. Después recuerda la elección del usuario.
+        var storedPanelState = localStorage.getItem('filterPanelCollapsed');
+        var filterPanelCollapsed = storedPanelState === null
+            ? true
+            : storedPanelState === 'true';
         var originalNodes = [];
         var originalEdges = [];
         var initialPositions = {{}};
@@ -537,6 +620,35 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
         var navigationHistory = [];
         var isNavigatingBack = false;
+
+        function setFilterPanelCollapsed(collapsed) {{
+            var panel = document.getElementById('filter-panel');
+            var btn = document.getElementById('btn-toggle-panel');
+
+            if (!panel || !btn) return;
+
+            filterPanelCollapsed = collapsed;
+            panel.classList.toggle('collapsed', collapsed);
+
+            if (collapsed) {{
+                btn.innerHTML = '☰';
+                btn.title = 'Mostrar controles';
+                btn.setAttribute('aria-expanded', 'false');
+            }} else {{
+                btn.innerHTML = '×';
+                btn.title = 'Ocultar controles';
+                btn.setAttribute('aria-expanded', 'true');
+            }}
+
+            localStorage.setItem(
+                'filterPanelCollapsed',
+                collapsed ? 'true' : 'false'
+            );
+        }}
+
+        function toggleFilterPanel() {{
+            setFilterPanelCollapsed(!filterPanelCollapsed);
+        }}
 
         function switchFlowMode(newMode) {{
             currentFlowMode = newMode;
@@ -650,6 +762,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             var btn = document.getElementById('btn-reset');
             btn.style.backgroundColor = t.btnBg;
 
+            var btnTogglePanel = document.getElementById('btn-toggle-panel');
+            if (btnTogglePanel) {{
+                btnTogglePanel.style.backgroundColor = t.btnBg;
+                btnTogglePanel.style.color = '#FFFFFF';
+            }}
+
             document.documentElement.style.setProperty('--tooltip-bg', t.tooltipBg);
             document.documentElement.style.setProperty('--tooltip-text', t.tooltipText);
             document.documentElement.style.setProperty('--tooltip-border', t.tooltipBorder);
@@ -728,6 +846,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             
             document.getElementById('sel-theme').value = currentThemeKey;
             applyThemeStyles(currentThemeKey);
+            setFilterPanelCollapsed(filterPanelCollapsed);
             filterByEndosos();
         }});
 
