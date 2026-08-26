@@ -1,3 +1,7 @@
+"""
+Módulo para la generación del Grafo Interactivo de Bonos CNR con Búsqueda Reactiva por Subcadenas.
+"""
+
 import os
 import re
 import unicodedata
@@ -6,6 +10,7 @@ import gspread
 import google.auth
 from google.auth.transport.requests import Request
 from pyvis.network import Network
+
 
 def normalizar_texto(val):
     if pd.isna(val) or val is None:
@@ -21,20 +26,22 @@ def normalizar_texto(val):
     texto = re.sub(r'\.', '', texto)
     return " ".join(texto.split())
 
+
 def acortar_texto(texto, max_len=14):
     if len(texto) > max_len:
         return texto[:max_len] + "..."
     return texto
 
+
 def main():
-    print("➡️ Autenticando en GCP mediante Workload Identity Federation...")
+    print("➡️ Autenticando en GCP mediante Workload Identity Federation / Credenciales...")
     SCOPES = [
-        "https://www.googleapis.com/auth/spreadsheets", 
+        "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
     
     credentials, project = google.auth.default(scopes=SCOPES)
-    if not credentials.valid: 
+    if not credentials.valid:
         credentials.refresh(Request())
         
     gc = gspread.authorize(credentials)
@@ -42,7 +49,7 @@ def main():
     spreadsheet_url = os.environ.get("SPREADSHEET_URL")
     print("➡️ Conectando a Google Sheets...")
     sh = gc.open_by_url(spreadsheet_url)
-    sheet = sh.sheet1 
+    sheet = sh.sheet1
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
@@ -57,7 +64,7 @@ def main():
     for _, row in df.iterrows():
         cepia_id = normalizar_texto(row.get('N° Cepia', ''))
         beneficiario_id = normalizar_texto(row.get('Beneficiario', ''))
-        if not cepia_id: 
+        if not cepia_id:
             continue
 
         bonos_set.add(cepia_id)
@@ -81,11 +88,11 @@ def main():
             max_endosos_encontrados = num_endosos_bono
 
     net = Network(
-        height="100vh", 
-        width="100%", 
-        directed=True, 
-        notebook=False, 
-        bgcolor="#FAFAFA", 
+        height="100vh",
+        width="100%",
+        directed=True,
+        notebook=False,
+        bgcolor="#FAFAFA",
         font_color="#2B2B2B"
     )
     
@@ -126,7 +133,7 @@ def main():
     for idx, row in df.iterrows():
         cepia_id = normalizar_texto(row.get('N° Cepia', ''))
         beneficiario_id = normalizar_texto(row.get('Beneficiario', ''))
-        if not cepia_id: 
+        if not cepia_id:
             continue
 
         i_temp = 1
@@ -153,9 +160,9 @@ def main():
         title_bono = f"<b>BONO (N° CEPIA):</b> {cepia_id}<br><b>Endosos Total:</b> {num_endosos_bono}<br><b>Beneficiario Final:</b> {beneficiario_id}"
 
         net.add_node(
-            cepia_id, 
-            label=f"Bono:\n{cepia_id}", 
-            title=title_bono, 
+            cepia_id,
+            label=f"Bono:\n{cepia_id}",
+            title=title_bono,
             group="bono",
             shape="dot",
             cantEndosos=num_endosos_bono,
@@ -167,9 +174,9 @@ def main():
             label_benef = acortar_texto(beneficiario_id, 12)
             title_benef = f"<b>BENEFICIARIO COMPLETO:</b><br>{beneficiario_id}"
             net.add_node(
-                beneficiario_id, 
-                label=label_benef, 
-                title=title_benef, 
+                beneficiario_id,
+                label=label_benef,
+                title=title_benef,
                 group="beneficiario",
                 shape="dot",
                 size=14,
@@ -183,9 +190,9 @@ def main():
             title_endo = f"<b>ENDOSATARIO:</b> {endosatario_id}<br><b>Endosos Recibidos:</b> {endosos_recibidos}"
 
             net.add_node(
-                endosatario_id, 
-                label=label_endo, 
-                title=title_endo, 
+                endosatario_id,
+                label=label_endo,
+                title=title_endo,
                 group="endosatario",
                 shape="box",
                 size=size_dinamico,
@@ -200,9 +207,9 @@ def main():
             label_arista = f"E{i}: {fecha_val}" if fecha_val else f"Endoso {i}"
             
             net.add_edge(
-                nodo_actual_c, 
-                endosatario_id, 
-                label=label_arista, 
+                nodo_actual_c,
+                endosatario_id,
+                label=label_arista,
                 title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
                 width=1.5,
                 bono=cepia_id,
@@ -216,10 +223,10 @@ def main():
 
         if beneficiario_id:
             net.add_edge(
-                nodo_actual_c, 
-                beneficiario_id, 
-                label="Asignado a", 
-                title=f"Bono: {cepia_id} | Beneficiario Final", 
+                nodo_actual_c,
+                beneficiario_id,
+                label="Asignado a",
+                title=f"Bono: {cepia_id} | Beneficiario Final",
                 width=1.5,
                 dashes=True,
                 bono=cepia_id,
@@ -233,10 +240,10 @@ def main():
         # --- ESTRUCTURA 2: SEGÚN TABLA (Bono -> Beneficiario -> Endosatarios) ---
         if beneficiario_id:
             net.add_edge(
-                cepia_id, 
-                beneficiario_id, 
-                label="Adjudicado a", 
-                title=f"Bono: {cepia_id} | Titular Beneficiario", 
+                cepia_id,
+                beneficiario_id,
+                label="Adjudicado a",
+                title=f"Bono: {cepia_id} | Titular Beneficiario",
                 width=1.5,
                 dashes=True,
                 bono=cepia_id,
@@ -255,9 +262,9 @@ def main():
             label_arista = f"E{i}: {fecha_val}" if fecha_val else f"Endoso {i}"
             
             net.add_edge(
-                nodo_actual_t, 
-                endosatario_id, 
-                label=label_arista, 
+                nodo_actual_t,
+                endosatario_id,
+                label=label_arista,
                 title=f"Bono: {cepia_id} | Fecha: {fecha_val}",
                 width=1.5,
                 bono=cepia_id,
@@ -317,14 +324,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             flex-wrap: wrap;
             max-width: 95%;
             max-height: calc(100vh - 20px);
-            overflow-y: auto;
+            overflow-y: visible;
             box-sizing: border-box;
             transition: width 0.25s ease, height 0.25s ease, padding 0.25s ease, background-color 0.2s ease;
         }}
 
-        /* =========================================================
-           PANEL PLEGABLE
-           ========================================================= */
         #btn-toggle-panel {{
             position: absolute;
             top: 7px;
@@ -365,8 +369,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             right: 4px;
         }}
 
-        /* En iframes angostos (por ejemplo Looker Studio),
-           el panel abierto se ordena verticalmente. */
         @media (max-width: 800px) {{
             #filter-panel:not(.collapsed) {{
                 flex-direction: column;
@@ -374,9 +376,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 width: min(320px, calc(100vw - 20px));
                 max-width: min(320px, calc(100vw - 20px));
                 flex-wrap: nowrap;
+                overflow-y: auto;
             }}
 
             #filter-panel:not(.collapsed) label,
+            #filter-panel:not(.collapsed) .filter-field,
             #filter-panel:not(.collapsed) fieldset {{
                 width: 100%;
                 box-sizing: border-box;
@@ -387,7 +391,16 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 box-sizing: border-box;
             }}
         }}
-        #filter-panel label {{
+
+        .filter-field {{
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            position: relative;
+            min-width: 180px;
+        }}
+
+        .filter-field label {{
             font-weight: bold;
             display: flex;
             flex-direction: column;
@@ -414,6 +427,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             display: flex;
             justify-content: space-between;
             align-items: center;
+            font-weight: bold;
         }}
         .sort-btn-group {{
             display: flex;
@@ -438,19 +452,102 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             background: rgba(255,255,255,0.2) !important;
             box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }}
-        #filter-panel select, #filter-panel button {{
+        #filter-panel select, #filter-panel button.action-btn {{
             padding: 6px 10px;
             border-radius: 4px;
             font-size: 12px;
             outline: none;
             transition: all 0.2s ease;
         }}
-        #filter-panel button {{
+        #filter-panel button.action-btn {{
             color: white;
             border: none;
             cursor: pointer;
             font-weight: bold;
             margin-top: 14px;
+        }}
+
+        /* =========================================================
+           ESTILOS COMBOBOX SEARCHABLE CON FILTRADO REACTIVO
+           ========================================================= */
+        .custom-combobox {{
+            position: relative;
+            width: 100%;
+        }}
+        .combo-input-wrapper {{
+            position: relative;
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }}
+        .combo-input {{
+            width: 100%;
+            padding: 6px 24px 6px 8px;
+            border-radius: 4px;
+            border: 1px solid #CCCCCC;
+            font-size: 12px;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }}
+        .combo-input:focus {{
+            border-color: #8FB3D9;
+            box-shadow: 0 0 0 2px rgba(143, 179, 217, 0.3);
+        }}
+        .combo-clear-btn {{
+            position: absolute;
+            right: 6px;
+            background: transparent !important;
+            border: none !important;
+            color: #888888 !important;
+            cursor: pointer;
+            font-size: 14px !important;
+            font-weight: bold !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            display: none;
+            line-height: 1;
+        }}
+        .combo-input:not(:placeholder-shown) + .combo-clear-btn {{
+            display: block;
+        }}
+        .combo-list {{
+            display: none;
+            position: absolute;
+            top: calc(100% + 3px);
+            left: 0;
+            right: 0;
+            max-height: 220px;
+            overflow-y: auto;
+            border-radius: 5px;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+            border: 1px solid #CCCCCC;
+            z-index: 1010;
+            margin: 0;
+            padding: 4px 0;
+            box-sizing: border-box;
+        }}
+        .combo-list.open {{
+            display: block;
+        }}
+        .combo-item {{
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1.3;
+            transition: background 0.15s ease;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .combo-item:hover, .combo-item.selected {{
+            background: rgba(143, 179, 217, 0.25);
+            font-weight: bold;
+        }}
+        .combo-item.no-results {{
+            color: #888888;
+            cursor: default;
+            font-style: italic;
         }}
 
         div.vis-tooltip {{
@@ -520,7 +617,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </div>
         </fieldset>
 
-        <label>
+        <!-- Filtro Endosatario con búsqueda substring -->
+        <div class="filter-field">
             <div class="header-sort-row">
                 <span>Endosatario:</span>
                 <div class="sort-btn-group">
@@ -528,12 +626,18 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     <button type="button" id="btn-sort-endo-count" class="sort-btn" onclick="setSortMode('endosatario', 'count')">N°</button>
                 </div>
             </div>
-            <select id="sel-endosatario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'endosatario')">
-                <option value="">-- Todos --</option>
-            </select>
-        </label>
+            <div class="custom-combobox" id="combo-endosatario" data-type="endosatario">
+                <div class="combo-input-wrapper">
+                    <input type="text" id="input-endosatario" class="combo-input" placeholder="Buscar endosatario..." autocomplete="off">
+                    <button type="button" class="combo-clear-btn" onclick="clearCombo('endosatario')">×</button>
+                </div>
+                <div class="combo-list" id="list-endosatario"></div>
+                <input type="hidden" id="sel-endosatario" value="">
+            </div>
+        </div>
 
-        <label>
+        <!-- Filtro Beneficiario con búsqueda substring -->
+        <div class="filter-field">
             <div class="header-sort-row">
                 <span>Beneficiario:</span>
                 <div class="sort-btn-group">
@@ -541,19 +645,31 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     <button type="button" id="btn-sort-bene-count" class="sort-btn" onclick="setSortMode('beneficiario', 'count')">N°</button>
                 </div>
             </div>
-            <select id="sel-beneficiario" class="searchable-select" onchange="applyIsolationFilter(this.value, 'beneficiario')">
-                <option value="">-- Todos --</option>
-            </select>
-        </label>
+            <div class="custom-combobox" id="combo-beneficiario" data-type="beneficiario">
+                <div class="combo-input-wrapper">
+                    <input type="text" id="input-beneficiario" class="combo-input" placeholder="Buscar beneficiario..." autocomplete="off">
+                    <button type="button" class="combo-clear-btn" onclick="clearCombo('beneficiario')">×</button>
+                </div>
+                <div class="combo-list" id="list-beneficiario"></div>
+                <input type="hidden" id="sel-beneficiario" value="">
+            </div>
+        </div>
 
-        <label>Bono (N° Cepia):
-            <select id="sel-bono" class="searchable-select" onchange="applyIsolationFilter(this.value, 'bono')">
-                <option value="">-- Todos --</option>
-            </select>
-        </label>
+        <!-- Filtro Bono con búsqueda substring -->
+        <div class="filter-field">
+            <label for="input-bono">Bono (N° Cepia):</label>
+            <div class="custom-combobox" id="combo-bono" data-type="bono">
+                <div class="combo-input-wrapper">
+                    <input type="text" id="input-bono" class="combo-input" placeholder="Buscar bono..." autocomplete="off">
+                    <button type="button" class="combo-clear-btn" onclick="clearCombo('bono')">×</button>
+                </div>
+                <div class="combo-list" id="list-bono"></div>
+                <input type="hidden" id="sel-bono" value="">
+            </div>
+        </div>
 
-        <button type="button" id="btn-toggle-labels" style="background-color: #555555;" onclick="toggleEdgeLabels()">Ocultar Fechas</button>
-        <button type="button" id="btn-reset" onclick="resetZoom()">Restablecer Vista</button>
+        <button type="button" id="btn-toggle-labels" class="action-btn" style="background-color: #555555;" onclick="toggleEdgeLabels()">Ocultar Fechas</button>
+        <button type="button" id="btn-reset" class="action-btn" onclick="resetZoom()">Restablecer Vista</button>
     </div>
 
     <script>
@@ -603,11 +719,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var currentThemeKey = localStorage.getItem('selectedTheme') || 'dia1';
         var currentFlowMode = 'cronologico';
 
-        // El panel parte plegado la primera vez. Después recuerda la elección del usuario.
         var storedPanelState = localStorage.getItem('filterPanelCollapsed');
-        var filterPanelCollapsed = storedPanelState === null
-            ? true
-            : storedPanelState === 'true';
+        var filterPanelCollapsed = storedPanelState === null ? true : storedPanelState === 'true';
         var originalNodes = [];
         var originalEdges = [];
         var initialPositions = {{}};
@@ -621,10 +734,21 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var navigationHistory = [];
         var isNavigatingBack = false;
 
+        // Estructura de almacenamiento de opciones para los Comboboxes
+        var comboOptionsData = {{
+            bono: [],
+            endosatario: [],
+            beneficiario: []
+        }};
+
+        function normalizeSearchString(str) {{
+            if (!str) return "";
+            return str.toString().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().trim();
+        }}
+
         function setFilterPanelCollapsed(collapsed) {{
             var panel = document.getElementById('filter-panel');
             var btn = document.getElementById('btn-toggle-panel');
-
             if (!panel || !btn) return;
 
             filterPanelCollapsed = collapsed;
@@ -634,16 +758,14 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 btn.innerHTML = '☰';
                 btn.title = 'Mostrar controles';
                 btn.setAttribute('aria-expanded', 'false');
+                closeAllComboLists();
             }} else {{
                 btn.innerHTML = '×';
                 btn.title = 'Ocultar controles';
                 btn.setAttribute('aria-expanded', 'true');
             }}
 
-            localStorage.setItem(
-                'filterPanelCollapsed',
-                collapsed ? 'true' : 'false'
-            );
+            localStorage.setItem('filterPanelCollapsed', collapsed ? 'true' : 'false');
         }}
 
         function toggleFilterPanel() {{
@@ -673,11 +795,113 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }}
         }}
 
-        function setSortMode(type, mode) {{
-            var selectId = (type === 'endosatario') ? 'sel-endosatario' : 'sel-beneficiario';
-            var selectElem = document.getElementById(selectId);
-            if (!selectElem) return;
+        // =========================================================
+        // LÓGICA DE COMBOBOX CON BÚSQUEDA REACTIVA POR SUBSTRING
+        // =========================================================
+        function initComboboxes() {{
+            ['bono', 'endosatario', 'beneficiario'].forEach(function(type) {{
+                var input = document.getElementById('input-' + type);
+                var list = document.getElementById('list-' + type);
 
+                input.addEventListener('focus', function() {{
+                    closeAllComboLists();
+                    renderComboList(type, input.value);
+                    list.classList.add('open');
+                }});
+
+                input.addEventListener('input', function() {{
+                    renderComboList(type, input.value);
+                    list.classList.add('open');
+                    // Si se vacía el campo con Backspace/Delete, se desaplica el filtro
+                    if (input.value.trim() === "") {{
+                        document.getElementById('sel-' + type).value = "";
+                        applyIsolationFilter("", type);
+                    }}
+                }});
+
+                input.addEventListener('keydown', function(e) {{
+                    if (e.key === 'Escape') {{
+                        list.classList.remove('open');
+                    }}
+                }});
+            }});
+
+            document.addEventListener('click', function(e) {{
+                if (!e.target.closest('.custom-combobox')) {{
+                    closeAllComboLists();
+                }}
+            }});
+        }}
+
+        function closeAllComboLists() {{
+            document.querySelectorAll('.combo-list').forEach(function(l) {{
+                l.classList.remove('open');
+            }});
+        }}
+
+        function renderComboList(type, query) {{
+            var list = document.getElementById('list-' + type);
+            var items = comboOptionsData[type] || [];
+            var normalizedQuery = normalizeSearchString(query);
+
+            var filtered = items.filter(function(item) {{
+                if (!normalizedQuery) return true;
+                if (item.value === "") return true; // Mantener opción "-- Todos --"
+                return normalizeSearchString(item.label).includes(normalizedQuery) || 
+                       normalizeSearchString(item.value).includes(normalizedQuery);
+            }});
+
+            list.innerHTML = "";
+
+            if (filtered.length === 0) {{
+                var noRes = document.createElement('div');
+                noRes.className = 'combo-item no-results';
+                noRes.textContent = 'Sin coincidencias...';
+                list.appendChild(noRes);
+                return;
+            }}
+
+            var currentVal = document.getElementById('sel-' + type).value;
+
+            filtered.forEach(function(item) {{
+                var div = document.createElement('div');
+                div.className = 'combo-item' + (item.value === currentVal && item.value !== "" ? ' selected' : '');
+                div.textContent = item.label;
+                div.title = item.label;
+
+                div.addEventListener('click', function(e) {{
+                    e.stopPropagation();
+                    selectComboItem(type, item.value, item.label);
+                }});
+
+                list.appendChild(div);
+            }});
+        }}
+
+        function selectComboItem(type, value, label) {{
+            var input = document.getElementById('input-' + type);
+            var hidden = document.getElementById('sel-' + type);
+            var list = document.getElementById('list-' + type);
+
+            hidden.value = value;
+            input.value = value ? label.replace(/\s\(\d+\s(endosos?|bonos?)\)$/, '') : "";
+            list.classList.remove('open');
+
+            applyIsolationFilter(value, type);
+        }}
+
+        function clearCombo(type, skipApply) {{
+            var input = document.getElementById('input-' + type);
+            var hidden = document.getElementById('sel-' + type);
+            input.value = "";
+            hidden.value = "";
+            renderComboList(type, "");
+            if (!skipApply) {{
+                applyIsolationFilter("", type);
+            }}
+        }}
+
+        function setSortMode(type, mode) {{
             if (type === 'endosatario') {{
                 sortModeEndo = mode;
                 document.getElementById('btn-sort-endo-alpha').classList.toggle('active', mode === 'alpha');
@@ -688,23 +912,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 document.getElementById('btn-sort-bene-count').classList.toggle('active', mode === 'count');
             }}
 
-            var currentVal = selectElem.value;
-            var options = Array.from(selectElem.options).filter(opt => opt.value !== "");
-
-            options.sort(function(a, b) {{
-                if (mode === 'count') {{
-                    var countA = parseInt((a.text.match(/\((\d+)\s+/)||[])[1] || 0, 10);
-                    var countB = parseInt((b.text.match(/\((\d+)\s+/)||[])[1] || 0, 10);
-                    var diff = countB - countA;
-                    return diff !== 0 ? diff : a.text.localeCompare(b.text);
-                }} else {{
-                    return a.text.localeCompare(b.text);
-                }}
-            }});
-
-            selectElem.innerHTML = '<option value="">-- Todos --</option>';
-            options.forEach(opt => selectElem.appendChild(opt));
-            selectElem.value = currentVal;
+            // Reordenar datos en memoria y volver a pintar
+            updateSelectDropdowns();
         }}
 
         function getStyledNodes(nodeList, validNodeIds) {{
@@ -712,8 +921,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             return nodeList.map(function(n) {{
                 var groupTheme = t[n.group] || t.bono;
                 var isExactlySelected = (currentIsolatedValue && n.id === currentIsolatedValue);
-                
-                // Si se pasa validNodeIds, el nodo es visible SOLO si pertenece al conjunto
                 var isVisible = validNodeIds ? validNodeIds.has(n.id) : (n.hidden !== undefined ? !n.hidden : true);
 
                 var styledNode = {{
@@ -747,11 +954,18 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             panel.style.borderColor = t.panelBorder;
             panel.style.color = t.textCtrl;
 
-            var selects = panel.querySelectorAll('select');
+            var selects = panel.querySelectorAll('select, .combo-input');
             selects.forEach(function(s) {{
                 s.style.backgroundColor = t.ctrlBg;
                 s.style.color = t.textCtrl;
                 s.style.borderColor = t.ctrlBorder;
+            }});
+
+            var lists = panel.querySelectorAll('.combo-list');
+            lists.forEach(function(l) {{
+                l.style.backgroundColor = t.ctrlBg;
+                l.style.borderColor = t.ctrlBorder;
+                l.style.color = t.textCtrl;
             }});
 
             var sortBtns = panel.querySelectorAll('.sort-btn');
@@ -844,43 +1058,16 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             originalNodes = JSON.parse(JSON.stringify(nodes.get()));
             originalEdges = JSON.parse(JSON.stringify(edges.get()));
             
+            initComboboxes();
             document.getElementById('sel-theme').value = currentThemeKey;
             applyThemeStyles(currentThemeKey);
             setFilterPanelCollapsed(filterPanelCollapsed);
             filterByEndosos();
         }});
 
-        document.querySelectorAll('.searchable-select').forEach(function(select) {{
-            var searchStr = "";
-            var searchTimeout;
-            select.addEventListener('keydown', function(e) {{
-                if (e.key.length === 1) {{
-                    searchStr += e.key.toLowerCase();
-                    clearTimeout(searchTimeout);
-                    searchTimeout = setTimeout(function() {{ searchStr = ""; }}, 1000);
-
-                    for (var i = 0; i < select.options.length; i++) {{
-                        if (select.options[i].text.toLowerCase().includes(searchStr)) {{
-                            select.selectedIndex = i;
-                            select.dispatchEvent(new Event('change'));
-                            break;
-                        }}
-                    }}
-                }}
-            }});
-        }});
-
         function updateSelectDropdowns(validNodeIds) {{
-            var selBono = document.getElementById('sel-bono');
-            var selEndo = document.getElementById('sel-endosatario');
-            var selBene = document.getElementById('sel-beneficiario');
-
-            var valBono = selBono.value;
-            var valEndo = selEndo.value;
-            var valBene = selBene.value;
-
-            var bonosList = []; 
-            var endoMap = {{}}; 
+            var bonosList = [];
+            var endoMap = {{}};
             var beneMap = {{}};
 
             var activeEdges = originalEdges.filter(e => e.flowMode === currentFlowMode && (!validNodeIds || (validNodeIds.has(e.from) && validNodeIds.has(e.to))));
@@ -942,26 +1129,29 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 sortedBenes.sort();
             }}
 
-            selBono.innerHTML = '<option value="">-- Todos --</option>' + 
-                bonosList.map(b => `<option value="${{b}}">${{b}}</option>`).join('');
+            // Construcción de arrays de opciones en memoria
+            comboOptionsData.bono = [{{ value: "", label: "-- Todos los Bonos --" }}].concat(
+                bonosList.map(b => ({{ value: b, label: b }}))
+            );
 
-            selEndo.innerHTML = '<option value="">-- Todos --</option>' + 
-                sortedEndos.map(e => {{
+            comboOptionsData.endosatario = [{{ value: "", label: "-- Todos los Endosatarios --" }}].concat(
+                sortedEndos.map(function(e) {{
                     var cant = endoMap[e];
-                    var labelText = `${{e}} (${{cant}} endoso${{cant !== 1 ? 's' : ''}})`;
-                    return `<option value="${{e}}">${{labelText}}</option>`;
-                }}).join('');
+                    return {{ value: e, label: `${{e}} (${{cant}} endoso${{cant !== 1 ? 's' : ''}})` }};
+                }})
+            );
 
-            selBene.innerHTML = '<option value="">-- Todos --</option>' + 
-                sortedBenes.map(b => {{
+            comboOptionsData.beneficiario = [{{ value: "", label: "-- Todos los Beneficiarios --" }}].concat(
+                sortedBenes.map(function(b) {{
                     var cant = beneMap[b].size;
-                    var labelText = `${{b}} (${{cant}} bono${{cant !== 1 ? 's' : ''}})`;
-                    return `<option value="${{b}}">${{labelText}}</option>`;
-                }}).join('');
+                    return {{ value: b, label: `${{b}} (${{cant}} bono${{cant !== 1 ? 's' : ''}})` }};
+                }})
+            );
 
-            selBono.value = bonosList.includes(valBono) ? valBono : "";
-            selEndo.value = sortedEndos.includes(valEndo) ? valEndo : "";
-            selBene.value = sortedBenes.includes(valBene) ? valBene : "";
+            ['bono', 'endosatario', 'beneficiario'].forEach(function(type) {{
+                var input = document.getElementById('input-' + type);
+                renderComboList(type, input ? input.value : "");
+            }});
         }}
 
         function checkEndososCondition(val, op, targetVal) {{
@@ -1007,13 +1197,20 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             var t = THEMES[currentThemeKey] || THEMES.dia1;
 
-            if (type !== 'bono') document.getElementById('sel-bono').value = "";
-            if (type !== 'endosatario') document.getElementById('sel-endosatario').value = "";
-            if (type !== 'beneficiario') document.getElementById('sel-beneficiario').value = "";
+            // Limpiar los inputs y campos ocultos de los otros filtros
+            ['bono', 'endosatario', 'beneficiario'].forEach(function(fType) {{
+                if (fType !== type) {{
+                    document.getElementById('sel-' + fType).value = "";
+                    document.getElementById('input-' + fType).value = "";
+                }}
+            }});
 
-            if (type === 'bono') document.getElementById('sel-bono').value = selectedValue || "";
-            if (type === 'endosatario') document.getElementById('sel-endosatario').value = selectedValue || "";
-            if (type === 'beneficiario') document.getElementById('sel-beneficiario').value = selectedValue || "";
+            if (type) {{
+                document.getElementById('sel-' + type).value = selectedValue || "";
+                if (!selectedValue) {{
+                    document.getElementById('input-' + type).value = "";
+                }}
+            }}
 
             if (!selectedValue) {{
                 filterByEndosos();
@@ -1069,11 +1266,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     label: showEdgeLabels ? e.label : "",
                     width: isActive ? 3.5 : 1.5,
                     color: {{ color: isActive ? t.edgeHighlight : t.edgeNormal }},
-                    font: {{ 
-                        color: t.edgeText, 
-                        size: showEdgeLabels ? 8 : 0, 
-                        strokeWidth: showEdgeLabels ? 3 : 0, 
-                        strokeColor: t.bgGrafo 
+                    font: {{
+                        color: t.edgeText,
+                        size: showEdgeLabels ? 8 : 0,
+                        strokeWidth: showEdgeLabels ? 3 : 0,
+                        strokeColor: t.bgGrafo
                     }}
                 }};
             }});
@@ -1104,6 +1301,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
                 if (clickedNode) {{
                     var type = clickedNode.group;
+                    var inputElem = document.getElementById('input-' + type);
+                    if (inputElem) inputElem.value = selectedNodeId;
                     applyIsolationFilter(selectedNodeId, type);
                 }}
             }} else if (params.edges.length > 0) {{
@@ -1112,6 +1311,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
                 if (clickedEdge && clickedEdge.bono) {{
                     var bonoId = clickedEdge.bono;
+                    var inputBono = document.getElementById('input-bono');
+                    if (inputBono) inputBono.value = bonoId;
                     applyIsolationFilter(bonoId, 'bono');
                 }}
             }} else {{
@@ -1120,22 +1321,24 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                     isNavigatingBack = true;
                     
                     if (previousState.val) {{
+                        var inputElem = document.getElementById('input-' + previousState.type);
+                        if (inputElem) inputElem.value = previousState.val;
                         applyIsolationFilter(previousState.val, previousState.type, true);
                     }} else {{
+                        clearCombo('bono', true);
+                        clearCombo('endosatario', true);
+                        clearCombo('beneficiario', true);
                         currentIsolatedValue = null;
                         currentIsolatedType = null;
-                        document.getElementById('sel-bono').value = "";
-                        document.getElementById('sel-endosatario').value = "";
-                        document.getElementById('sel-beneficiario').value = "";
                         filterByEndosos();
                     }}
                     isNavigatingBack = false;
                 }} else {{
+                    clearCombo('bono', true);
+                    clearCombo('endosatario', true);
+                    clearCombo('beneficiario', true);
                     currentIsolatedValue = null;
                     currentIsolatedType = null;
-                    document.getElementById('sel-bono').value = "";
-                    document.getElementById('sel-endosatario').value = "";
-                    document.getElementById('sel-beneficiario').value = "";
                     filterByEndosos();
                 }}
             }}
@@ -1144,9 +1347,10 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         function resetZoom() {{
             document.getElementById('sel-op-endosos').value = "gte";
             document.getElementById('sel-val-endosos').value = "ALL";
-            document.getElementById('sel-bono').value = "";
-            document.getElementById('sel-endosatario').value = "";
-            document.getElementById('sel-beneficiario').value = "";
+            
+            clearCombo('bono', true);
+            clearCombo('endosatario', true);
+            clearCombo('beneficiario', true);
             
             currentIsolatedValue = null;
             currentIsolatedType = null;
