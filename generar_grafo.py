@@ -1,18 +1,17 @@
 """
-Módulo para la generación del Grafo Interactivo de Bonos CNR con Búsqueda Reactiva por Subcadenas.
+Módulo principal para la extracción de datos y generación del Dashboard
+interactivo de Bonos CNR con flyout expandible en listas de búsqueda.
 """
 
 import os
 import re
 import unicodedata
 import pandas as pd
-import gspread
-import google.auth
-from google.auth.transport.requests import Request
 from pyvis.network import Network
 
 
-def normalizar_texto(val):
+def normalizar_texto(val) -> str:
+    """Limpia cadenas, elimina tildes y homologa razones sociales."""
     if pd.isna(val) or val is None:
         return ""
     texto = str(val).strip()
@@ -27,32 +26,60 @@ def normalizar_texto(val):
     return " ".join(texto.split())
 
 
-def acortar_texto(texto, max_len=14):
+def acortar_texto(texto: str, max_len: int = 14) -> str:
+    """Acorta etiquetas para nodos del grafo para evitar ruido visual."""
     if len(texto) > max_len:
         return texto[:max_len] + "..."
     return texto
 
 
-def main():
-    print("➡️ Autenticando en GCP mediante Workload Identity Federation / Credenciales...")
-    SCOPES = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    
-    credentials, project = google.auth.default(scopes=SCOPES)
-    if not credentials.valid:
-        credentials.refresh(Request())
-        
-    gc = gspread.authorize(credentials)
-
+def cargar_datos() -> pd.DataFrame:
+    """
+    Carga el DataFrame de bonos desde Google Sheets (si existen credenciales)
+    o desde archivo CSV local como respaldo.
+    """
     spreadsheet_url = os.environ.get("SPREADSHEET_URL")
-    print("➡️ Conectando a Google Sheets...")
-    sh = gc.open_by_url(spreadsheet_url)
-    sheet = sh.sheet1
-    data = sheet.get_all_records()
-    df = pd.DataFrame(data)
+    
+    if spreadsheet_url:
+        try:
+            import gspread
+            import google.auth
+            from google.auth.transport.requests import Request
 
+            print("➡️ Autenticando en GCP para lectura de Google Sheets...")
+            scopes = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ]
+            credentials, _ = google.auth.default(scopes=scopes)
+            if not credentials.valid:
+                credentials.refresh(Request())
+                
+            gc = gspread.authorize(credentials)
+            sh = gc.open_by_url(spreadsheet_url)
+            sheet = sh.sheet1
+            data = sheet.get_all_records()
+            print("✅ Datos cargados exitosamente desde Google Sheets.")
+            return pd.DataFrame(data)
+        except Exception as e:
+            print(f"⚠️ No se pudo conectar a Google Sheets ({e}). Buscando respaldo local...")
+
+    # Fallback: Carga de CSV local
+    rutas_locales = [
+        "Bonos_CNR_DashBoard_Resumen.csv",
+        "data/Bonos_CNR_DashBoard_Resumen.csv",
+        "../Bonos_CNR_DashBoard_Resumen.csv"
+    ]
+    for ruta in rutas_locales:
+        if os.path.exists(ruta):
+            print(f"✅ Cargando datos desde archivo local: {ruta}")
+            return pd.read_csv(ruta)
+
+    raise FileNotFoundError("No se encontró la fuente de datos ni en Google Sheets ni en archivos locales.")
+
+
+def construir_grafo(df: pd.DataFrame, output_path: str = "docs/index.html") -> None:
+    """Procesa el DataFrame y genera el grafo HTML con vis.js y controles."""
     print("➡️ Procesando datos e indexando número de endosos por bono...")
     
     bonos_set = set()
@@ -276,15 +303,15 @@ def main():
             )
             nodo_actual_t = endosatario_id
 
-    os.makedirs("docs", exist_ok=True)
-    output_path = os.path.join("docs", "index.html")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     net.write_html(output_path)
 
-    inyectar_panel_filtros(output_path, bonos_set, endosatarios_set, beneficiarios_set, max_endosos_encontrados)
-    print(f"✅ Grafo actualizado exitosamente en: {output_path}")
+    inyectar_panel_filtros(output_path, max_endosos_encontrados)
+    print(f"✅ Dashboard generado exitosamente en: {output_path}")
 
 
-def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_endosos):
+def inyectar_panel_filtros(html_path: str, max_endosos: int) -> None:
+    """Inyecta el panel de controles, CSS responsivo y lógica JS del combobox expandible."""
     with open(html_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
@@ -324,7 +351,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             flex-wrap: wrap;
             max-width: 95%;
             max-height: calc(100vh - 20px);
-            overflow-y: visible;
+            overflow: visible;
             box-sizing: border-box;
             transition: width 0.25s ease, height 0.25s ease, padding 0.25s ease, background-color 0.2s ease;
         }}
@@ -373,8 +400,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             #filter-panel:not(.collapsed) {{
                 flex-direction: column;
                 align-items: stretch;
-                width: min(320px, calc(100vw - 20px));
-                max-width: min(320px, calc(100vw - 20px));
+                width: min(340px, calc(100vw - 20px));
+                max-width: min(340px, calc(100vw - 20px));
                 flex-wrap: nowrap;
                 overflow-y: auto;
             }}
@@ -390,6 +417,12 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 width: 100%;
                 box-sizing: border-box;
             }}
+            
+            .combo-list {{
+                min-width: 100% !important;
+                max-width: 100% !important;
+                left: 0 !important;
+            }}
         }}
 
         .filter-field {{
@@ -397,7 +430,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             flex-direction: column;
             gap: 4px;
             position: relative;
-            min-width: 180px;
+            min-width: 175px;
         }}
 
         .filter-field label {{
@@ -468,7 +501,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         }}
 
         /* =========================================================
-           ESTILOS COMBOBOX SEARCHABLE CON FILTRADO REACTIVO
+           FLYOUT FLOTANTE EXPANDIBLE (OPCIÓN 1)
            ========================================================= */
         .custom-combobox {{
             position: relative;
@@ -511,18 +544,21 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         .combo-input:not(:placeholder-shown) + .combo-clear-btn {{
             display: block;
         }}
+
+        /* La lista flota con un ancho desacoplado hacia la derecha */
         .combo-list {{
             display: none;
             position: absolute;
-            top: calc(100% + 3px);
+            top: calc(100% + 4px);
             left: 0;
-            right: 0;
-            max-height: 220px;
+            min-width: max(100%, 480px);
+            max-width: min(720px, 90vw);
+            max-height: 290px;
             overflow-y: auto;
-            border-radius: 5px;
-            box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+            border-radius: 6px;
+            box-shadow: 0 10px 28px rgba(0,0,0,0.45);
             border: 1px solid #CCCCCC;
-            z-index: 1010;
+            z-index: 10000;
             margin: 0;
             padding: 4px 0;
             box-sizing: border-box;
@@ -531,23 +567,47 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             display: block;
         }}
         .combo-item {{
-            padding: 6px 10px;
+            padding: 8px 12px;
             cursor: pointer;
             font-size: 12px;
-            line-height: 1.3;
+            line-height: 1.35;
             transition: background 0.15s ease;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 14px;
+            border-bottom: 1px solid rgba(150, 150, 150, 0.15);
+            white-space: normal;
+            word-break: break-word;
+        }}
+        .combo-item:last-child {{
+            border-bottom: none;
+        }}
+        .combo-item-text {{
+            flex: 1;
+            font-weight: 500;
+        }}
+        .combo-item-badge {{
+            font-size: 11px;
+            opacity: 0.8;
             white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            background: rgba(0,0,0,0.08);
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-weight: bold;
         }}
         .combo-item:hover, .combo-item.selected {{
             background: rgba(143, 179, 217, 0.25);
+        }}
+        .combo-item.selected .combo-item-text {{
             font-weight: bold;
         }}
         .combo-item.no-results {{
             color: #888888;
             cursor: default;
             font-style: italic;
+            justify-content: center;
+            padding: 12px;
         }}
 
         div.vis-tooltip {{
@@ -617,7 +677,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </div>
         </fieldset>
 
-        <!-- Filtro Endosatario con búsqueda substring -->
+        <!-- Filtro Endosatario -->
         <div class="filter-field">
             <div class="header-sort-row">
                 <span>Endosatario:</span>
@@ -636,7 +696,7 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </div>
         </div>
 
-        <!-- Filtro Beneficiario con búsqueda substring -->
+        <!-- Filtro Beneficiario -->
         <div class="filter-field">
             <div class="header-sort-row">
                 <span>Beneficiario:</span>
@@ -655,15 +715,15 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             </div>
         </div>
 
-        <!-- Filtro Bono con búsqueda substring -->
-        <div class="filter-field">
+        <!-- Filtro Bono -->
+        <div class="filter-field" style="min-width: 140px;">
             <label for="input-bono">Bono (N° Cepia):</label>
             <div class="custom-combobox" id="combo-bono" data-type="bono">
                 <div class="combo-input-wrapper">
                     <input type="text" id="input-bono" class="combo-input" placeholder="Buscar bono..." autocomplete="off">
                     <button type="button" class="combo-clear-btn" onclick="clearCombo('bono')">×</button>
                 </div>
-                <div class="combo-list" id="list-bono"></div>
+                <div class="combo-list" id="list-bono" style="min-width: 100%;"></div>
                 <input type="hidden" id="sel-bono" value="">
             </div>
         </div>
@@ -734,7 +794,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
         var navigationHistory = [];
         var isNavigatingBack = false;
 
-        // Estructura de almacenamiento de opciones para los Comboboxes
         var comboOptionsData = {{
             bono: [],
             endosatario: [],
@@ -795,9 +854,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             }}
         }}
 
-        // =========================================================
-        // LÓGICA DE COMBOBOX CON BÚSQUEDA REACTIVA POR SUBSTRING
-        // =========================================================
         function initComboboxes() {{
             ['bono', 'endosatario', 'beneficiario'].forEach(function(type) {{
                 var input = document.getElementById('input-' + type);
@@ -812,7 +868,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 input.addEventListener('input', function() {{
                     renderComboList(type, input.value);
                     list.classList.add('open');
-                    // Si se vacía el campo con Backspace/Delete, se desaplica el filtro
                     if (input.value.trim() === "") {{
                         document.getElementById('sel-' + type).value = "";
                         applyIsolationFilter("", type);
@@ -846,8 +901,8 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             var filtered = items.filter(function(item) {{
                 if (!normalizedQuery) return true;
-                if (item.value === "") return true; // Mantener opción "-- Todos --"
-                return normalizeSearchString(item.label).includes(normalizedQuery) || 
+                if (item.value === "") return true;
+                return normalizeSearchString(item.name).includes(normalizedQuery) || 
                        normalizeSearchString(item.value).includes(normalizedQuery);
             }});
 
@@ -866,25 +921,37 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
             filtered.forEach(function(item) {{
                 var div = document.createElement('div');
                 div.className = 'combo-item' + (item.value === currentVal && item.value !== "" ? ' selected' : '');
-                div.textContent = item.label;
-                div.title = item.label;
+
+                var textSpan = document.createElement('span');
+                textSpan.className = 'combo-item-text';
+                textSpan.textContent = item.name;
+
+                div.appendChild(textSpan);
+
+                if (item.count !== null && item.count !== undefined) {{
+                    var badgeSpan = document.createElement('span');
+                    badgeSpan.className = 'combo-item-badge';
+                    var labelSuffix = (type === 'beneficiario') ? (item.count !== 1 ? 'bonos' : 'bono') : (item.count !== 1 ? 'endosos' : 'endoso');
+                    badgeSpan.textContent = item.count + ' ' + labelSuffix;
+                    div.appendChild(badgeSpan);
+                }}
 
                 div.addEventListener('click', function(e) {{
                     e.stopPropagation();
-                    selectComboItem(type, item.value, item.label);
+                    selectComboItem(type, item.value, item.name);
                 }});
 
                 list.appendChild(div);
             }});
         }}
 
-        function selectComboItem(type, value, label) {{
+        function selectComboItem(type, value, name) {{
             var input = document.getElementById('input-' + type);
             var hidden = document.getElementById('sel-' + type);
             var list = document.getElementById('list-' + type);
 
             hidden.value = value;
-            input.value = value ? label.replace(/\s\(\d+\s(endosos?|bonos?)\)$/, '') : "";
+            input.value = value ? name : "";
             list.classList.remove('open');
 
             applyIsolationFilter(value, type);
@@ -912,7 +979,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 document.getElementById('btn-sort-bene-count').classList.toggle('active', mode === 'count');
             }}
 
-            // Reordenar datos en memoria y volver a pintar
             updateSelectDropdowns();
         }}
 
@@ -1129,22 +1195,19 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
                 sortedBenes.sort();
             }}
 
-            // Construcción de arrays de opciones en memoria
-            comboOptionsData.bono = [{{ value: "", label: "-- Todos los Bonos --" }}].concat(
-                bonosList.map(b => ({{ value: b, label: b }}))
+            comboOptionsData.bono = [{{ value: "", name: "-- Todos los Bonos --", count: null }}].concat(
+                bonosList.map(b => ({{ value: b, name: b, count: null }}))
             );
 
-            comboOptionsData.endosatario = [{{ value: "", label: "-- Todos los Endosatarios --" }}].concat(
+            comboOptionsData.endosatario = [{{ value: "", name: "-- Todos los Endosatarios --", count: null }}].concat(
                 sortedEndos.map(function(e) {{
-                    var cant = endoMap[e];
-                    return {{ value: e, label: `${{e}} (${{cant}} endoso${{cant !== 1 ? 's' : ''}})` }};
+                    return {{ value: e, name: e, count: endoMap[e] }};
                 }})
             );
 
-            comboOptionsData.beneficiario = [{{ value: "", label: "-- Todos los Beneficiarios --" }}].concat(
+            comboOptionsData.beneficiario = [{{ value: "", name: "-- Todos los Beneficiarios --", count: null }}].concat(
                 sortedBenes.map(function(b) {{
-                    var cant = beneMap[b].size;
-                    return {{ value: b, label: `${{b}} (${{cant}} bono${{cant !== 1 ? 's' : ''}})` }};
+                    return {{ value: b, name: b, count: beneMap[b].size }};
                 }})
             );
 
@@ -1197,7 +1260,6 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
             var t = THEMES[currentThemeKey] || THEMES.dia1;
 
-            // Limpiar los inputs y campos ocultos de los otros filtros
             ['bono', 'endosatario', 'beneficiario'].forEach(function(fType) {{
                 if (fType !== type) {{
                     document.getElementById('sel-' + fType).value = "";
@@ -1374,6 +1436,11 @@ def inyectar_panel_filtros(html_path, bonos, endosatarios, beneficiarios, max_en
 
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
+
+
+def main():
+    df = cargar_datos()
+    construir_grafo(df, output_path="docs/index.html")
 
 
 if __name__ == "__main__":
