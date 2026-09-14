@@ -102,19 +102,9 @@ def procesar_telemetria_viajes(df):
                     delta_min = (siguiente['dt'] - fila['dt']).total_seconds() / 60.0
                     
                     # Umbral mínimo para capturar parada en datos: >= 3 minutos
+                    # 1. DETECCIÓN DE PARADA (para el selector dinámico de la web):
+                    # Guarda cualquier detención >= 3 min sin romper el viaje
                     if delta_min >= 3.0:
-                        pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
-                        km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
-                        
-                        # Si acumuló más de 300 metros, consolidar como viaje previo
-                        if km_viaje >= 0.3:
-                            viajes.append({
-                                'puntos': puntos_viaje_actual,
-                                'km': round(km_viaje, 1),
-                                'reanudacion': nodo_reanudacion
-                            })
-                        puntos_viaje_actual = []
-
                         paradas.append({
                             'inicio': str(fila['Hora']),
                             'fin': str(siguiente['Hora']),
@@ -123,6 +113,20 @@ def procesar_telemetria_viajes(df):
                             'lon': float(fila['Longitud']),
                             'direccion': str(fila.get('Direccion', 'En ruta'))
                         })
+
+                    # 2. CORTE DE VIAJE MACRO (Ida / Faena / Vuelta):
+                    # Solo corta y divide en un nuevo "Viaje" si estuvo detenido 25 minutos o más
+                    if delta_min >= 25.0:
+                        pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
+                        km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
+                        
+                        if km_viaje >= 0.3:
+                            viajes.append({
+                                'puntos': puntos_viaje_actual,
+                                'km': round(km_viaje, 1),
+                                'reanudacion': nodo_reanudacion
+                            })
+                        puntos_viaje_actual = []
                         nodo_reanudacion = {
                             'lat': float(siguiente['Latitud']),
                             'lon': float(siguiente['Longitud']),
