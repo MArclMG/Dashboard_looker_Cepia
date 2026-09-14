@@ -39,13 +39,34 @@ def procesar_telemetria_viajes(df):
     df['dt'] = pd.to_datetime(df['Fecha'].astype(str) + ' ' + df['Hora'].astype(str), errors='coerce')
     df = df.dropna(subset=['dt']).sort_values(by=['Vehículo', 'dt']).reset_index(drop=True)
 
-    vehiculos = sorted(df['Vehículo'].unique().tolist())
+    nombres_vehiculos = sorted(df['Vehículo'].unique().tolist())
     dias = sorted(df['Fecha'].unique().tolist())
+    
+    vehiculos_info = []
     estructura = {}
 
-    for v in vehiculos:
+    for v in nombres_vehiculos:
         df_v = df[df['Vehículo'] == v]
-        estructura[v] = {}
+        
+        # Extraer conductor más frecuente o asignado
+        cond_series = df_v['Conductor'].dropna().astype(str)
+        cond_series = cond_series[~cond_series.isin(["", "None", "null", "Sin Asignar"])]
+        conductor_vehiculo = cond_series.mode()[0] if not cond_series.empty else "Sin Asignar"
+        
+        placa_vehiculo = str(df_v['Placa'].dropna().iloc[0]) if 'Placa' in df_v.columns and not df_v['Placa'].dropna().empty else v
+
+        vehiculos_info.append({
+            'id': v,
+            'placa': placa_vehiculo,
+            'conductor': conductor_vehiculo,
+            'label': f"{placa_vehiculo} — {conductor_vehiculo}"
+        })
+
+        estructura[v] = {
+            'conductor': conductor_vehiculo,
+            'placa': placa_vehiculo,
+            'dias': {}
+        }
 
         for dia in dias:
             sub = df_v[df_v['Fecha'] == dia].reset_index(drop=True)
@@ -77,7 +98,6 @@ def procesar_telemetria_viajes(df):
                             })
                         puntos_viaje_actual = []
 
-                        # Registrar parada y guardar el primer punto siguiente como "nodo de reanudación"
                         paradas.append({
                             'inicio': str(fila['Hora']),
                             'fin': str(siguiente['Hora']),
@@ -116,7 +136,6 @@ def procesar_telemetria_viajes(df):
                     vel = float(fila['Velocidad'])
                     hora = str(fila['Hora'])
 
-                    # Cálculo de rumbo hacia el siguiente punto
                     angulo = 0
                     if i < len(pts_v) - 1:
                         sig = pts_v[i + 1]
@@ -142,7 +161,7 @@ def procesar_telemetria_viajes(df):
                         'lon': lon,
                         'hora': hora,
                         'vel': vel,
-                        'fraccion': round(i / max(1, len(pts_v) - 1), 3) # Fracción temporal 0.0 a 1.0 para el gradiente
+                        'fraccion': round(i / max(1, len(pts_v) - 1), 3)
                     })
 
                 viajes_json.append({
@@ -157,25 +176,25 @@ def procesar_telemetria_viajes(df):
                     'flechas': flechas
                 })
 
-            estructura[v][dia] = {
+            estructura[v]['dias'][dia] = {
                 'viajes': viajes_json,
                 'paradas': paradas,
                 'inicio_dia': [float(sub.iloc[0]['Latitud']), float(sub.iloc[0]['Longitud']), str(sub.iloc[0]['Hora'])],
                 'fin_dia': [float(sub.iloc[-1]['Latitud']), float(sub.iloc[-1]['Longitud']), str(sub.iloc[-1]['Hora'])]
             }
 
-    return vehiculos, dias, estructura
+    return vehiculos_info, dias, estructura
 
-def generar_html_mapa(vehiculos, dias, datos):
+def generar_html_mapa(vehiculos_info, dias, datos):
     datos_json = json.dumps(datos)
-    vehiculos_json = json.dumps(vehiculos)
+    vehiculos_json = json.dumps(vehiculos_info)
     dias_json = json.dumps(dias)
 
     return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Visor de Rutas GPS con Gradiente y Telemetría</title>
+  <title>Visor de Rutas GPS y Conductores</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -183,7 +202,6 @@ def generar_html_mapa(vehiculos, dias, datos):
     body, html {{ margin: 0; padding: 0; height: 100%; width: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
     #map {{ height: 100%; width: 100%; z-index: 1; }}
 
-    /* Botón de Colapso Flotante */
     #toggle-panel-btn {{
       position: absolute;
       top: 12px;
@@ -207,7 +225,6 @@ def generar_html_mapa(vehiculos, dias, datos):
     #toggle-panel-btn:hover {{ background: #f1f5f9; }}
     #toggle-panel-btn.collapsed {{ right: 12px; }}
 
-    /* Panel de Control Lateral */
     .control-panel {{
       position: absolute;
       top: 12px;
@@ -235,6 +252,18 @@ def generar_html_mapa(vehiculos, dias, datos):
     .form-group label {{ display: block; font-weight: 600; margin-bottom: 4px; color: #475569; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }}
     select {{ width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; font-size: 13px; font-weight: 500; outline: none; }}
     
+    /* Conductor Badge */
+    .conductor-card {{
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-left: 4px solid #0284c7;
+      padding: 8px 10px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+    }}
+    .conductor-card .title {{ font-size: 10px; text-transform: uppercase; font-weight: 700; color: #64748b; }}
+    .conductor-card .name {{ font-size: 14px; font-weight: 700; color: #0f172a; margin-top: 1px; }}
+
     .km-badge {{
       background: #ecfeff;
       border: 1px solid #a5f3fc;
@@ -295,7 +324,6 @@ def generar_html_mapa(vehiculos, dias, datos):
     .stop-card:hover {{ background: #f8fafc; }}
     .stop-time {{ font-weight: 700; color: #b45309; }}
 
-    /* Gradiente bar visual */
     .gradient-preview {{
       height: 8px;
       border-radius: 4px;
@@ -311,7 +339,6 @@ def generar_html_mapa(vehiculos, dias, datos):
       font-weight: 600;
     }}
 
-    /* Estilos de Iconos y Badges */
     .arrow-icon {{ display: flex; align-items: center; justify-content: center; transform-origin: center center; }}
     
     .badge-label {{
@@ -338,7 +365,7 @@ def generar_html_mapa(vehiculos, dias, datos):
   <div class="control-panel" id="main-panel">
     <h4>Control de Rutas GPS</h4>
 
-    <!-- Selector de Capas Google -->
+    <!-- Selector de Capas Base de Google Maps -->
     <div class="form-group">
       <label for="select-mapa">Capa Base</label>
       <select id="select-mapa">
@@ -349,10 +376,16 @@ def generar_html_mapa(vehiculos, dias, datos):
       </select>
     </div>
 
-    <!-- Filtros de Vehículo y Día -->
+    <!-- Filtros de Vehículo con Conductor -->
     <div class="form-group">
-      <label for="select-vehiculo">Vehículo / Patente</label>
+      <label for="select-vehiculo">Vehículo & Conductor</label>
       <select id="select-vehiculo"></select>
+    </div>
+
+    <!-- Ficha de Conductor Asignado -->
+    <div class="conductor-card">
+      <div class="title">Conductor Asignado</div>
+      <div class="name" id="conductor-nombre">—</div>
     </div>
 
     <div class="form-group">
@@ -366,7 +399,7 @@ def generar_html_mapa(vehiculos, dias, datos):
       <span id="total-km-badge">0.0 km</span>
     </div>
 
-    <!-- Navegación a Puntos Extremos del Día -->
+    <!-- Navegación a Puntos Extremos -->
     <div class="nav-buttons">
       <button class="btn-nav" onclick="irAPunto('inicio')">📍 Inicio del Día</button>
       <button class="btn-nav" onclick="irAPunto('fin')">🏁 Fin del Día</button>
@@ -378,7 +411,7 @@ def generar_html_mapa(vehiculos, dias, datos):
       <div class="trips-container" id="trips-list"></div>
     </div>
 
-    <!-- Modo de Color (Gradiente Temporal vs Sólido) -->
+    <!-- Gradiente Temporal -->
     <div class="form-group">
       <label>Visualización Temporal de Ruta</label>
       <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; margin-bottom:4px;">
@@ -393,7 +426,7 @@ def generar_html_mapa(vehiculos, dias, datos):
       </div>
     </div>
 
-    <!-- Listado de Paradas Prolongadas -->
+    <!-- Paradas Prolongadas -->
     <div class="form-group">
       <label>Paradas Registradas (&ge; 20 min)</label>
       <div class="stops-container" id="stops-list"></div>
@@ -419,7 +452,6 @@ def generar_html_mapa(vehiculos, dias, datos):
       layers: [capas.satelite]
     }});
 
-    // Capas separadas para controlar visibilidad por zoom
     let capaRutas = L.featureGroup().addTo(map);
     let capaHitos = L.featureGroup().addTo(map);
     let capaTiemposZoomMedio = L.featureGroup().addTo(map);
@@ -443,8 +475,8 @@ def generar_html_mapa(vehiculos, dias, datos):
     const selVeh = document.getElementById('select-vehiculo');
     listaVehiculos.forEach(v => {{
       const opt = document.createElement('option');
-      opt.value = v;
-      opt.textContent = v;
+      opt.value = v.id;
+      opt.textContent = v.label;
       selVeh.appendChild(opt);
     }});
 
@@ -456,7 +488,6 @@ def generar_html_mapa(vehiculos, dias, datos):
       selDia.appendChild(opt);
     }});
 
-    // Función de interpolación de color para el gradiente temporal (0.0 -> 1.0)
     function colorGradiente(t) {{
       let r, g, b;
       if (t < 0.5) {{
@@ -475,7 +506,7 @@ def generar_html_mapa(vehiculos, dias, datos):
 
     // 4. Refrescar Viajes y Paradas al cambiar selección
     function refrescarOpcionesDia() {{
-      const veh = selVeh.value;
+      const vehId = selVeh.value;
       const dia = selDia.value;
       const tripsList = document.getElementById('trips-list');
       const stopsList = document.getElementById('stops-list');
@@ -483,13 +514,18 @@ def generar_html_mapa(vehiculos, dias, datos):
       tripsList.innerHTML = '';
       stopsList.innerHTML = '';
 
-      if (!datosGPS[veh] || !datosGPS[veh][dia]) {{
+      if (!datosGPS[vehId]) return;
+
+      const infoVeh = datosGPS[vehId];
+      document.getElementById('conductor-nombre').textContent = infoVeh.conductor || "Sin Asignar";
+
+      if (!infoVeh.dias[dia]) {{
         tripsList.innerHTML = '<div style="color:#64748b; padding:4px;">Sin datos para este día.</div>';
         actualizarMapa();
         return;
       }}
 
-      const infoDia = datosGPS[veh][dia];
+      const infoDia = infoVeh.dias[dia];
 
       infoDia.viajes.forEach((v, idx) => {{
         const row = document.createElement('div');
@@ -521,7 +557,7 @@ def generar_html_mapa(vehiculos, dias, datos):
             map.flyTo([p.lat, p.lon], 16, {{ duration: 1 }});
             L.popup()
               .setLatLng([p.lat, p.lon])
-              .setContent(`<b>🛑 PARADA REGISTRADA #${{pIdx + 1}}</b><br>Horario: ${{p.inicio}} &rarr; ${{p.fin}}<br>Duración: ${{durStr}}<br>Lugar: ${{p.direccion}}`)
+              .setContent(`<b>🛑 PARADA REGISTRADA #${{pIdx + 1}}</b><br>Conductor: <b>${{infoVeh.conductor}}</b><br>Horario: ${{p.inicio}} &rarr; ${{p.fin}}<br>Duración: ${{durStr}}<br>Lugar: ${{p.direccion}}`)
               .openOn(map);
           }};
           stopsList.appendChild(card);
@@ -542,16 +578,20 @@ def generar_html_mapa(vehiculos, dias, datos):
       capaTiemposZoomMedio.clearLayers();
       capaTiemposZoomCercano.clearLayers();
 
-      const veh = selVeh.value;
+      const vehId = selVeh.value;
       const dia = selDia.value;
       const usarGradiente = document.getElementById('check-gradiente').checked;
 
-      if (!datosGPS[veh] || !datosGPS[veh][dia]) {{
+      if (!datosGPS[vehId] || !datosGPS[vehId].dias[dia]) {{
         document.getElementById('total-km-badge').textContent = "0.0 km";
         return;
       }}
 
-      const infoDia = datosGPS[veh][dia];
+      const infoVeh = datosGPS[vehId];
+      const infoDia = infoVeh.dias[dia];
+      const conductor = infoVeh.conductor;
+      const placa = infoVeh.placa;
+
       const cbs = document.querySelectorAll('.trip-cb:checked');
       const indicesActivos = Array.from(cbs).map(cb => parseInt(cb.dataset.idx));
 
@@ -565,7 +605,6 @@ def generar_html_mapa(vehiculos, dias, datos):
         kmTotales += viaje.km;
         const pts = viaje.puntos;
 
-        // Trazado de ruta (segmentos con gradiente o color sólido)
         for (let i = 0; i < pts.length - 1; i++) {{
           const p1 = pts[i];
           const p2 = pts[i + 1];
@@ -576,13 +615,12 @@ def generar_html_mapa(vehiculos, dias, datos):
             weight: 5,
             opacity: 0.88,
             lineJoin: 'round'
-          }}).bindTooltip(`<b>${{viaje.nombre}}</b><br>Hora: ${{p1.hora}}<br>Velocidad: ${{p1.vel}} km/h`);
+          }}).bindTooltip(`<b>${{viaje.nombre}}</b><br>Conductor: <b>${{conductor}}</b><br>Hora: ${{p1.hora}}<br>Velocidad: ${{p1.vel}} km/h`);
           capaRutas.addLayer(segLine);
           bounds.push([p1.lat, p1.lon]);
         }}
         if (pts.length > 0) bounds.push([pts[pts.length - 1].lat, pts[pts.length - 1].lon]);
 
-        // A. MARCADORES DE INICIO Y FIN DEL VIAJE
         const ini = viaje.inicio_coord;
         const fin = viaje.fin_coord;
 
@@ -591,16 +629,15 @@ def generar_html_mapa(vehiculos, dias, datos):
           html: `<div class="badge-label badge-start">🏁 Inicio ${{viaje.nombre}} (${{viaje.hora_inicio}})</div>`,
           iconAnchor: [30, 24]
         }});
-        capaHitos.addLayer(L.marker([ini[0], ini[1]], {{ icon: iconIni }}));
+        capaHitos.addLayer(L.marker([ini[0], ini[1]], {{ icon: iconIni }}).bindPopup(`<b>🏁 INICIO DE ${{viaje.nombre.toUpperCase()}}</b><br>Vehículo: ${{placa}}<br>Conductor: <b>${{conductor}}</b><br>Hora: ${{viaje.hora_inicio}}`));
 
         const iconFin = L.divIcon({{
           className: '',
           html: `<div class="badge-label badge-end">⏹️ Fin ${{viaje.nombre}} (${{viaje.hora_fin}})</div>`,
           iconAnchor: [30, 24]
         }});
-        capaHitos.addLayer(L.marker([fin[0], fin[1]], {{ icon: iconFin }}));
+        capaHitos.addLayer(L.marker([fin[0], fin[1]], {{ icon: iconFin }}).bindPopup(`<b>⏹️ FIN DE ${{viaje.nombre.toUpperCase()}}</b><br>Vehículo: ${{placa}}<br>Conductor: <b>${{conductor}}</b><br>Hora: ${{viaje.hora_fin}}`));
 
-        // B. PRIMER NODO DESPUÉS DE LA DETENCIÓN (Reanudación)
         if (viaje.reanudacion) {{
           const r = viaje.reanudacion;
           const iconResume = L.divIcon({{
@@ -608,15 +645,14 @@ def generar_html_mapa(vehiculos, dias, datos):
             html: `<div class="badge-label badge-resume">⚡ Salida tras parada: ${{r.hora}}</div>`,
             iconAnchor: [40, 24]
           }});
-          const mResume = L.marker([r.lat, r.lon], {{ icon: iconResume }}).bindPopup(`
+          capaHitos.addLayer(L.marker([r.lat, r.lon], {{ icon: iconResume }}).bindPopup(`
             <b>⚡ REANUDACIÓN DE MARCHA</b><br>
+            Conductor: <b>${{conductor}}</b><br>
             Hora de arranque: ${{r.hora}}<br>
             Velocidad inicial: ${{r.vel}} km/h
-          `);
-          capaHitos.addLayer(mResume);
+          `));
         }}
 
-        // C. FLECHAS DE DIRECCIÓN Y EXCESOS
         viaje.flechas.forEach(f => {{
           const esExceso = f.es_exceso;
           const colorIcono = esExceso ? '#ef4444' : '#1d4ed8';
@@ -638,7 +674,8 @@ def generar_html_mapa(vehiculos, dias, datos):
             marker.bindPopup(`
               <div style="font-size:12px; line-height:1.4;">
                 <b style="color:#b91c1c; font-size:13px;">⚠️ EXCESO DE VELOCIDAD</b><br>
-                <b>Vehículo:</b> ${{veh}}<br>
+                <b>Vehículo:</b> ${{placa}}<br>
+                <b>Conductor:</b> <b>${{conductor}}</b><br>
                 <b>Velocidad:</b> ${{f.vel}} km/h<br>
                 <b>Hora:</b> ${{f.hora}}<br>
                 <b>Lugar:</b> ${{f.direccion}}
@@ -651,9 +688,7 @@ def generar_html_mapa(vehiculos, dias, datos):
           }}
         }});
 
-        // D. MARCAS DE TIEMPO INTERMEDIAS SEGÚN ZOOM
         pts.forEach((p, idxPt) => {{
-          // Zoom medio: cada ~20 muestras (~10-15 minutos)
           if (idxPt > 0 && idxPt < pts.length - 1 && idxPt % 25 === 0) {{
             const badgeMedio = L.marker([p.lat, p.lon], {{
               icon: L.divIcon({{
@@ -664,7 +699,6 @@ def generar_html_mapa(vehiculos, dias, datos):
             }});
             capaTiemposZoomMedio.addLayer(badgeMedio);
           }}
-          // Zoom cercano: cada 5 muestras (~2-3 minutos)
           if (idxPt > 0 && idxPt < pts.length - 1 && idxPt % 6 === 0) {{
             const badgeCercano = L.circleMarker([p.lat, p.lon], {{
               radius: 4,
@@ -687,7 +721,6 @@ def generar_html_mapa(vehiculos, dias, datos):
       controlarCapasPorZoom();
     }}
 
-    // Control dinámico de densidad de etiquetas según zoom
     function controlarCapasPorZoom() {{
       const z = map.getZoom();
       if (z >= 13) {{
@@ -706,10 +739,10 @@ def generar_html_mapa(vehiculos, dias, datos):
     map.on('zoomend', controlarCapasPorZoom);
 
     function irAPunto(tipo) {{
-      const veh = selVeh.value;
+      const vehId = selVeh.value;
       const dia = selDia.value;
-      if (!datosGPS[veh] || !datosGPS[veh][dia]) return;
-      const coords = tipo === 'inicio' ? datosGPS[veh][dia].inicio_dia : datosGPS[veh][dia].fin_dia;
+      if (!datosGPS[vehId] || !datosGPS[vehId].dias[dia]) return;
+      const coords = tipo === 'inicio' ? datosGPS[vehId].dias[dia].inicio_dia : datosGPS[vehId].dias[dia].fin_dia;
       map.flyTo([coords[0], coords[1]], 16, {{ duration: 1 }});
     }}
 
@@ -726,10 +759,10 @@ def generar_html_mapa(vehiculos, dias, datos):
 if __name__ == "__main__":
     os.makedirs("docs", exist_ok=True)
     df_raw = obtener_datos()
-    vehiculos, dias, estructura = procesar_telemetria_viajes(df_raw)
-    html_out = generar_html_mapa(vehiculos, dias, estructura)
+    vehiculos_info, dias, estructura = procesar_telemetria_viajes(df_raw)
+    html_out = generar_html_mapa(vehiculos_info, dias, estructura)
 
     ruta = os.path.join("docs", "rutas_gps.html")
     with open(ruta, "w", encoding="utf-8") as f:
         f.write(html_out)
-    print(f"Visor GPS avanzado generado exitosamente en: {ruta}")
+    print(f"Visor GPS con Conductores generado exitosamente en: {ruta}")
