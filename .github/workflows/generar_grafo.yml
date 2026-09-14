@@ -1,4 +1,4 @@
-name: Generar y Publicar Grafo de Endosos
+name: Generar y Publicar Grafo de Endosos y Mapa GPS
 
 on:
   schedule:
@@ -9,7 +9,6 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
-    # Definir el entorno evita que deploy-pages@v4 se quede en "updating_pages" infinito
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -37,13 +36,19 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install pandas gspread google-auth pyvis
+          pip install pandas gspread google-auth pyvis folium
 
-      - name: Ejecutar script de extracción y generación
+      - name: Ejecutar script de grafo de endosos
         env:
           SPREADSHEET_URL: ${{ secrets.SPREADSHEET_URL }}
         run: |
           python generar_grafo.py
+
+      - name: Ejecutar script de rutas GPS de camionetas
+        env:
+          GPS_SPREADSHEET_ID: "1n-edOD5p1K99m2m78SoTlJSnXDU_rY69Vxk5yttPgHg"
+        run: |
+          python generar_mapa_gps.py
 
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
