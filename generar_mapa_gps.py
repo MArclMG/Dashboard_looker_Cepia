@@ -6,22 +6,16 @@ import gspread
 import google.auth
 
 def calcular_azimut(lat1, lon1, lat2, lon2):
-    """Calcula el rumbo geográfico (azimut) en grados de 0 a 360."""
-    p1_lat = math.radians(lat1)
-    p1_lon = math.radians(lon1)
-    p2_lat = math.radians(lat2)
-    p2_lon = math.radians(lon2)
-    
+    p1_lat, p1_lon = math.radians(lat1), math.radians(lon1)
+    p2_lat, p2_lon = math.radians(lat2), math.radians(lon2)
     dlon = p2_lon - p1_lon
     y = math.sin(dlon) * math.cos(p2_lat)
     x = math.cos(p1_lat) * math.sin(p2_lat) - math.sin(p1_lat) * math.cos(p2_lat) * math.cos(dlon)
-    rumbo = math.degrees(math.atan2(y, x))
-    return round((rumbo + 360) % 360, 1)
+    return round((math.degrees(math.atan2(y, x)) + 360) % 360, 1)
 
 def haversine_km(lat1, lon1, lat2, lon2):
     R = 6371.0
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
+    dlat, dlon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
     a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
     return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
 
@@ -34,8 +28,7 @@ def obtener_datos():
     spreadsheet_id = os.environ.get("GPS_SPREADSHEET_ID", "1n-edOD5p1K99m2m78SoTlJSnXDU_rY69Vxk5yttPgHg")
     sh = gc.open_by_key(spreadsheet_id)
     ws = sh.worksheet("Looker_GPS")
-    records = ws.get_all_records()
-    return pd.DataFrame(records)
+    return pd.DataFrame(ws.get_all_records())
 
 def procesar_telemetria_viajes(df):
     df['Latitud'] = pd.to_numeric(df['Latitud'], errors='coerce')
@@ -48,7 +41,6 @@ def procesar_telemetria_viajes(df):
 
     vehiculos = sorted(df['Vehículo'].unique().tolist())
     dias = sorted(df['Fecha'].unique().tolist())
-
     estructura = {}
 
     for v in vehiculos:
@@ -60,12 +52,10 @@ def procesar_telemetria_viajes(df):
             if sub.empty:
                 continue
 
-            # 1. Segmentar en viajes por paradas prolongadas (>= 20 minutos detenidos o sin transmisión)
             viajes = []
             paradas = []
-            
             puntos_viaje_actual = []
-            idx_inicio_viaje = 0
+            nodo_reanudacion = None
 
             for i in range(len(sub)):
                 fila = sub.iloc[i]
@@ -76,17 +66,18 @@ def procesar_telemetria_viajes(df):
                     delta_min = (siguiente['dt'] - fila['dt']).total_seconds() / 60.0
                     
                     if delta_min >= 20.0:
-                        # Evaluar si el viaje actual tuvo desplazamiento real (> 300 metros)
                         pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
-                        km_viaje = 0.0
-                        for k in range(1, len(pts_coords)):
-                            km_viaje += haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1])
+                        km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
                         
                         if km_viaje >= 0.3:
-                            viajes.append((puntos_viaje_actual, round(km_viaje, 1)))
+                            viajes.append({
+                                'puntos': puntos_viaje_actual,
+                                'km': round(km_viaje, 1),
+                                'reanudacion': nodo_reanudacion
+                            })
                         puntos_viaje_actual = []
 
-                        # Registrar parada intermedia
+                        # Registrar parada y guardar el primer punto siguiente como "nodo de reanudación"
                         paradas.append({
                             'inicio': str(fila['Hora']),
                             'fin': str(siguiente['Hora']),
@@ -95,33 +86,37 @@ def procesar_telemetria_viajes(df):
                             'lon': float(fila['Longitud']),
                             'direccion': str(fila.get('Direccion', 'En ruta'))
                         })
+                        nodo_reanudacion = {
+                            'lat': float(siguiente['Latitud']),
+                            'lon': float(siguiente['Longitud']),
+                            'hora': str(siguiente['Hora']),
+                            'vel': float(siguiente['Velocidad'])
+                        }
 
             if puntos_viaje_actual:
                 pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
-                km_viaje = 0.0
-                for k in range(1, len(pts_coords)):
-                    km_viaje += haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1])
+                km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
                 if km_viaje >= 0.3:
-                    viajes.append((puntos_viaje_actual, round(km_viaje, 1)))
+                    viajes.append({
+                        'puntos': puntos_viaje_actual,
+                        'km': round(km_viaje, 1),
+                        'reanudacion': nodo_reanudacion
+                    })
 
-            # Procesar cada viaje estructurado
             viajes_json = []
-            for num_v, (pts_v, km_v) in enumerate(viajes):
-                segmentos = []
-                seg_actual = []
+            for num_v, v_item in enumerate(viajes):
+                pts_v = v_item['puntos']
+                km_v = v_item['km']
+                puntos_detallados = []
                 flechas = []
 
                 for i in range(len(pts_v)):
                     fila = pts_v[i]
-                    lat = float(fila['Latitud'])
-                    lon = float(fila['Longitud'])
+                    lat, lon = float(fila['Latitud']), float(fila['Longitud'])
                     vel = float(fila['Velocidad'])
                     hora = str(fila['Hora'])
-                    direccion = str(fila.get('Direccion', ''))
 
-                    seg_actual.append([lat, lon])
-
-                    # Calcular ángulo de rumbo
+                    # Cálculo de rumbo hacia el siguiente punto
                     angulo = 0
                     if i < len(pts_v) - 1:
                         sig = pts_v[i + 1]
@@ -139,11 +134,16 @@ def procesar_telemetria_viajes(df):
                             'vel': vel,
                             'hora': hora,
                             'es_exceso': es_exceso,
-                            'direccion': direccion
+                            'direccion': str(fila.get('Direccion', ''))
                         })
 
-                if seg_actual:
-                    segmentos.append(seg_actual)
+                    puntos_detallados.append({
+                        'lat': lat,
+                        'lon': lon,
+                        'hora': hora,
+                        'vel': vel,
+                        'fraccion': round(i / max(1, len(pts_v) - 1), 3) # Fracción temporal 0.0 a 1.0 para el gradiente
+                    })
 
                 viajes_json.append({
                     'nombre': f"Viaje {num_v + 1}",
@@ -152,23 +152,9 @@ def procesar_telemetria_viajes(df):
                     'hora_fin': str(pts_v[-1]['Hora']),
                     'inicio_coord': [float(pts_v[0]['Latitud']), float(pts_v[0]['Longitud'])],
                     'fin_coord': [float(pts_v[-1]['Latitud']), float(pts_v[-1]['Longitud'])],
-                    'segmentos': segmentos,
+                    'reanudacion': v_item['reanudacion'],
+                    'puntos': puntos_detallados,
                     'flechas': flechas
-                })
-
-            # Si no hubo viajes diferenciados por parada, empaquetar el día completo como 1 viaje
-            if not viajes_json and len(sub) > 1:
-                pts_coords = [[float(r['Latitud']), float(r['Longitud'])] for _, r in sub.iterrows()]
-                km_total = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
-                viajes_json.append({
-                    'nombre': "Viaje Único",
-                    'km': round(km_total, 1),
-                    'hora_inicio': str(sub.iloc[0]['Hora']),
-                    'hora_fin': str(sub.iloc[-1]['Hora']),
-                    'inicio_coord': [float(sub.iloc[0]['Latitud']), float(sub.iloc[0]['Longitud'])],
-                    'fin_coord': [float(sub.iloc[-1]['Latitud']), float(sub.iloc[-1]['Longitud'])],
-                    'segmentos': [pts_coords],
-                    'flechas': []
                 })
 
             estructura[v][dia] = {
@@ -185,11 +171,11 @@ def generar_html_mapa(vehiculos, dias, datos):
     vehiculos_json = json.dumps(vehiculos)
     dias_json = json.dumps(dias)
 
-    html = f"""<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Visor de Rutas GPS y Viajes</title>
+  <title>Visor de Rutas GPS con Gradiente y Telemetría</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -197,29 +183,58 @@ def generar_html_mapa(vehiculos, dias, datos):
     body, html {{ margin: 0; padding: 0; height: 100%; width: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
     #map {{ height: 100%; width: 100%; z-index: 1; }}
 
+    /* Botón de Colapso Flotante */
+    #toggle-panel-btn {{
+      position: absolute;
+      top: 12px;
+      right: 342px;
+      z-index: 1001;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      border-radius: 8px;
+      width: 36px;
+      height: 36px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: bold;
+      color: #334155;
+      transition: right 0.3s ease, background 0.2s;
+    }}
+    #toggle-panel-btn:hover {{ background: #f1f5f9; }}
+    #toggle-panel-btn.collapsed {{ right: 12px; }}
+
     /* Panel de Control Lateral */
     .control-panel {{
       position: absolute;
-      top: 10px;
-      right: 10px;
+      top: 12px;
+      right: 12px;
       z-index: 1000;
       background: rgba(255, 255, 255, 0.96);
       padding: 14px 16px;
       border-radius: 10px;
-      box-shadow: 0 4px 18px rgba(0,0,0,0.18);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.18);
       width: 320px;
       max-height: 94vh;
       overflow-y: auto;
       font-size: 13px;
       color: #1e293b;
       backdrop-filter: blur(5px);
+      transition: transform 0.3s ease, opacity 0.3s ease;
+    }}
+    .control-panel.hidden {{
+      transform: translateX(360px);
+      opacity: 0;
+      pointer-events: none;
     }}
     .control-panel h4 {{ margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }}
-    .form-group {{ margin-bottom: 12px; }}
+    .form-group {{ margin-bottom: 11px; }}
     .form-group label {{ display: block; font-weight: 600; margin-bottom: 4px; color: #475569; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }}
     select {{ width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; font-size: 13px; font-weight: 500; outline: none; }}
     
-    /* Contador de KM */
     .km-badge {{
       background: #ecfeff;
       border: 1px solid #a5f3fc;
@@ -233,7 +248,6 @@ def generar_html_mapa(vehiculos, dias, datos):
       margin-bottom: 10px;
     }}
 
-    /* Botones de navegación */
     .nav-buttons {{ display: flex; gap: 6px; margin-bottom: 10px; }}
     .btn-nav {{
       flex: 1;
@@ -252,9 +266,8 @@ def generar_html_mapa(vehiculos, dias, datos):
     }}
     .btn-nav:hover {{ background: #e2e8f0; }}
 
-    /* Lista de Viajes */
     .trips-container {{
-      max-height: 130px;
+      max-height: 120px;
       overflow-y: auto;
       border: 1px solid #e2e8f0;
       border-radius: 6px;
@@ -264,9 +277,8 @@ def generar_html_mapa(vehiculos, dias, datos):
     .trip-item {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; font-size: 12px; cursor: pointer; }}
     .trip-item input {{ margin-right: 6px; }}
 
-    /* Lista de Paradas */
     .stops-container {{
-      max-height: 120px;
+      max-height: 110px;
       overflow-y: auto;
       border: 1px solid #e2e8f0;
       border-radius: 6px;
@@ -274,50 +286,70 @@ def generar_html_mapa(vehiculos, dias, datos):
       padding: 4px;
     }}
     .stop-card {{
-      padding: 5px 6px;
+      padding: 4px 6px;
       border-bottom: 1px solid #f1f5f9;
       cursor: pointer;
       font-size: 11px;
       border-radius: 4px;
     }}
-    .stop-card:hover {{ background: #f1f5f9; }}
-    .stop-card:last-child {{ border-bottom: none; }}
+    .stop-card:hover {{ background: #f8fafc; }}
     .stop-time {{ font-weight: 700; color: #b45309; }}
 
-    /* Selector de color */
-    .color-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }}
-    .color-row input[type="color"] {{
-      border: none;
-      width: 26px;
-      height: 26px;
-      border-radius: 50%;
-      cursor: pointer;
-      background: none;
-      padding: 0;
+    /* Gradiente bar visual */
+    .gradient-preview {{
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(to right, #06b6d4, #2563eb, #9333ea);
+      margin-top: 4px;
+      margin-bottom: 2px;
+    }}
+    .gradient-labels {{
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #64748b;
+      font-weight: 600;
     }}
 
+    /* Estilos de Iconos y Badges */
     .arrow-icon {{ display: flex; align-items: center; justify-content: center; transform-origin: center center; }}
+    
+    .badge-label {{
+      background: rgba(15, 23, 42, 0.85);
+      color: #fff;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+      border: 1px solid rgba(255,255,255,0.3);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }}
+    .badge-start {{ background: #16a34a; }}
+    .badge-end {{ background: #dc2626; }}
+    .badge-resume {{ background: #d97706; }}
   </style>
 </head>
 <body>
 
+  <button id="toggle-panel-btn" title="Ocultar/Mostrar Panel">◀</button>
   <div id="map"></div>
 
-  <div class="control-panel">
+  <div class="control-panel" id="main-panel">
     <h4>Control de Rutas GPS</h4>
 
-    <!-- Selector de Capa de Fondo (Google Maps) -->
+    <!-- Selector de Capas Google -->
     <div class="form-group">
-      <label for="select-mapa">Capa de Mapa</label>
+      <label for="select-mapa">Capa Base</label>
       <select id="select-mapa">
-        <option value="calles">Google Calles</option>
         <option value="satelite" selected>Google Satélite (Híbrido)</option>
-        <option value="relieve">Google Relieve / Terreno</option>
+        <option value="calles">Google Calles</option>
+        <option value="relieve">Google Relieve</option>
         <option value="osm">OpenStreetMap</option>
       </select>
     </div>
 
-    <!-- Selector de Vehículo y Día -->
+    <!-- Filtros de Vehículo y Día -->
     <div class="form-group">
       <label for="select-vehiculo">Vehículo / Patente</label>
       <select id="select-vehiculo"></select>
@@ -328,37 +360,43 @@ def generar_html_mapa(vehiculos, dias, datos):
       <select id="select-dia"></select>
     </div>
 
-    <!-- Distancia total acumulada -->
+    <!-- Indicador de Kilómetros -->
     <div class="km-badge">
-      <span>Distancia Seleccionada:</span>
+      <span>Distancia de Viajes:</span>
       <span id="total-km-badge">0.0 km</span>
     </div>
 
-    <!-- Navegación a puntos Inicio / Fin -->
+    <!-- Navegación a Puntos Extremos del Día -->
     <div class="nav-buttons">
-      <button class="btn-nav" onclick="irAPunto('inicio')">📍 Ir a Inicio</button>
-      <button class="btn-nav" onclick="irAPunto('fin')">🏁 Ir a Término</button>
+      <button class="btn-nav" onclick="irAPunto('inicio')">📍 Inicio del Día</button>
+      <button class="btn-nav" onclick="irAPunto('fin')">🏁 Fin del Día</button>
     </div>
 
-    <!-- Viajes del día -->
+    <!-- Selección de Viajes -->
     <div class="form-group">
-      <label>Viajes del Día (Ida / Obra / Vuelta)</label>
+      <label>Viajes Detectados</label>
       <div class="trips-container" id="trips-list"></div>
     </div>
 
-    <!-- Paradas registradas -->
+    <!-- Modo de Color (Gradiente Temporal vs Sólido) -->
     <div class="form-group">
-      <label>Paradas del Día (&ge; 20 min)</label>
-      <div class="stops-container" id="stops-list"></div>
+      <label>Visualización Temporal de Ruta</label>
+      <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; margin-bottom:4px;">
+        <input type="checkbox" id="check-gradiente" checked>
+        <b>Activar gradiente de hora (Temprano &rarr; Tarde)</b>
+      </label>
+      <div class="gradient-preview"></div>
+      <div class="gradient-labels">
+        <span>Mañana (#06b6d4)</span>
+        <span>Mediodía (#2563eb)</span>
+        <span>Tarde (#9333ea)</span>
+      </div>
     </div>
 
-    <!-- Color de la Ruta -->
+    <!-- Listado de Paradas Prolongadas -->
     <div class="form-group">
-      <label>Color de la Ruta</label>
-      <div class="color-row">
-        <input type="color" id="route-color" value="#06b6d4">
-        <span id="route-hex" style="font-size:12px; font-weight:600; color:#06b6d4;">Turquesa (#06b6d4)</span>
-      </div>
+      <label>Paradas Registradas (&ge; 20 min)</label>
+      <div class="stops-container" id="stops-list"></div>
     </div>
   </div>
 
@@ -369,8 +407,8 @@ def generar_html_mapa(vehiculos, dias, datos):
 
     // 1. Capas Google Maps sin API Key
     const capas = {{
-      calles: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}', {{ maxZoom: 20, attribution: '&copy; Google Maps' }}),
       satelite: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={{x}}&y={{y}}&z={{z}}', {{ maxZoom: 20, attribution: '&copy; Google Satellite' }}),
+      calles: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}', {{ maxZoom: 20, attribution: '&copy; Google Maps' }}),
       relieve: L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={{x}}&y={{y}}&z={{z}}', {{ maxZoom: 20, attribution: '&copy; Google Terrain' }}),
       osm: L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{ maxZoom: 19, attribution: '&copy; OpenStreetMap' }})
     }};
@@ -381,15 +419,27 @@ def generar_html_mapa(vehiculos, dias, datos):
       layers: [capas.satelite]
     }});
 
+    // Capas separadas para controlar visibilidad por zoom
     let capaRutas = L.featureGroup().addTo(map);
+    let capaHitos = L.featureGroup().addTo(map);
+    let capaTiemposZoomMedio = L.featureGroup().addTo(map);
+    let capaTiemposZoomCercano = L.featureGroup().addTo(map);
 
-    // Cambiar capa base desde el select
     document.getElementById('select-mapa').addEventListener('change', (e) => {{
       Object.values(capas).forEach(c => map.removeLayer(c));
       capas[e.target.value].addTo(map);
     }});
 
-    // 2. Llenar Selectores
+    // 2. Colapsar / Expandir Panel
+    const toggleBtn = document.getElementById('toggle-panel-btn');
+    const mainPanel = document.getElementById('main-panel');
+    toggleBtn.addEventListener('click', () => {{
+      const estaOculto = mainPanel.classList.toggle('hidden');
+      toggleBtn.classList.toggle('collapsed', estaOculto);
+      toggleBtn.textContent = estaOculto ? '▶' : '◀';
+    }});
+
+    // 3. Llenar Selectores
     const selVeh = document.getElementById('select-vehiculo');
     listaVehiculos.forEach(v => {{
       const opt = document.createElement('option');
@@ -406,7 +456,24 @@ def generar_html_mapa(vehiculos, dias, datos):
       selDia.appendChild(opt);
     }});
 
-    // 3. Renderizar Viajes y Paradas en el menú lateral al cambiar de Vehículo o Día
+    // Función de interpolación de color para el gradiente temporal (0.0 -> 1.0)
+    function colorGradiente(t) {{
+      let r, g, b;
+      if (t < 0.5) {{
+        const f = t / 0.5;
+        r = Math.round(6 + f * (37 - 6));
+        g = Math.round(182 + f * (99 - 182));
+        b = Math.round(212 + f * (235 - 212));
+      }} else {{
+        const f = (t - 0.5) / 0.5;
+        r = Math.round(37 + f * (147 - 37));
+        g = Math.round(99 + f * (51 - 99));
+        b = Math.round(235 + f * (234 - 235));
+      }}
+      return `rgb(${{r}},${{g}},${{b}})`;
+    }}
+
+    // 4. Refrescar Viajes y Paradas al cambiar selección
     function refrescarOpcionesDia() {{
       const veh = selVeh.value;
       const dia = selDia.value;
@@ -417,14 +484,13 @@ def generar_html_mapa(vehiculos, dias, datos):
       stopsList.innerHTML = '';
 
       if (!datosGPS[veh] || !datosGPS[veh][dia]) {{
-        tripsList.innerHTML = '<div style="color:#64748b; padding:4px;">No hay registros para este día.</div>';
+        tripsList.innerHTML = '<div style="color:#64748b; padding:4px;">Sin datos para este día.</div>';
         actualizarMapa();
         return;
       }}
 
       const infoDia = datosGPS[veh][dia];
 
-      // Construir checkboxes de viajes
       infoDia.viajes.forEach((v, idx) => {{
         const row = document.createElement('div');
         row.className = 'trip-item';
@@ -438,32 +504,30 @@ def generar_html_mapa(vehiculos, dias, datos):
         tripsList.appendChild(row);
       }});
 
-      // Construir listado de paradas
       if (infoDia.paradas.length === 0) {{
-        stopsList.innerHTML = '<div style="color:#64748b; padding:4px;">Sin paradas prolongadas.</div>';
+        stopsList.innerHTML = '<div style="color:#64748b; padding:4px;">Sin paradas detectadas.</div>';
       }} else {{
-        infoDia.paradas.forEach(p => {{
+        infoDia.paradas.forEach((p, pIdx) => {{
           const card = document.createElement('div');
           card.className = 'stop-card';
           const durStr = p.duracion_min >= 60 
             ? `${{Math.floor(p.duracion_min/60)}}h ${{p.duracion_min%60}}m` 
             : `${{p.duracion_min}} min`;
           card.innerHTML = `
-            <div><span class="stop-time">🛑 Parada (${{durStr}}):</span> ${{p.inicio}} &rarr; ${{p.fin}}</div>
+            <div><span class="stop-time">🛑 Parada ${{pIdx + 1}} (${{durStr}}):</span> ${{p.inicio}} &rarr; ${{p.fin}}</div>
             <div style="color:#475569; font-size:10px; margin-top:2px;">${{p.direccion}}</div>
           `;
           card.onclick = () => {{
             map.flyTo([p.lat, p.lon], 16, {{ duration: 1 }});
             L.popup()
               .setLatLng([p.lat, p.lon])
-              .setContent(`<b>🛑 PARADA REGISTRADA</b><br>Hora: ${{p.inicio}} a ${{p.fin}}<br>Duración: ${{durStr}}<br>Lugar: ${{p.direccion}}`)
+              .setContent(`<b>🛑 PARADA REGISTRADA #${{pIdx + 1}}</b><br>Horario: ${{p.inicio}} &rarr; ${{p.fin}}<br>Duración: ${{durStr}}<br>Lugar: ${{p.direccion}}`)
               .openOn(map);
           }};
           stopsList.appendChild(card);
         }});
       }}
 
-      // Escuchar cambios en los checkboxes de viajes
       tripsList.querySelectorAll('.trip-cb').forEach(cb => {{
         cb.addEventListener('change', actualizarMapa);
       }});
@@ -471,14 +535,16 @@ def generar_html_mapa(vehiculos, dias, datos):
       actualizarMapa();
     }}
 
-    // 4. Renderizar rutas en el mapa y calcular KM totales seleccionados
+    // 5. Renderizado Principal
     function actualizarMapa() {{
       capaRutas.clearLayers();
+      capaHitos.clearLayers();
+      capaTiemposZoomMedio.clearLayers();
+      capaTiemposZoomCercano.clearLayers();
 
       const veh = selVeh.value;
       const dia = selDia.value;
-      const colorRuta = document.getElementById('route-color').value;
-      const colorFlecha = '#1d4ed8'; // Azul
+      const usarGradiente = document.getElementById('check-gradiente').checked;
 
       if (!datosGPS[veh] || !datosGPS[veh][dia]) {{
         document.getElementById('total-km-badge').textContent = "0.0 km";
@@ -497,23 +563,63 @@ def generar_html_mapa(vehiculos, dias, datos):
         if (!viaje) return;
 
         kmTotales += viaje.km;
+        const pts = viaje.puntos;
 
-        // Trazar línea de ruta
-        viaje.segmentos.forEach(seg => {{
-          const poly = L.polyline(seg, {{
-            color: colorRuta,
+        // Trazado de ruta (segmentos con gradiente o color sólido)
+        for (let i = 0; i < pts.length - 1; i++) {{
+          const p1 = pts[i];
+          const p2 = pts[i + 1];
+          const colorSeg = usarGradiente ? colorGradiente(p1.fraccion) : '#06b6d4';
+
+          const segLine = L.polyline([[p1.lat, p1.lon], [p2.lat, p2.lon]], {{
+            color: colorSeg,
             weight: 5,
-            opacity: 0.9,
+            opacity: 0.88,
             lineJoin: 'round'
-          }}).bindTooltip(`${{viaje.nombre}}: ${{viaje.km}} km`);
-          capaRutas.addLayer(poly);
-          seg.forEach(pt => bounds.push(pt));
-        }});
+          }}).bindTooltip(`<b>${{viaje.nombre}}</b><br>Hora: ${{p1.hora}}<br>Velocidad: ${{p1.vel}} km/h`);
+          capaRutas.addLayer(segLine);
+          bounds.push([p1.lat, p1.lon]);
+        }}
+        if (pts.length > 0) bounds.push([pts[pts.length - 1].lat, pts[pts.length - 1].lon]);
 
-        // Flechas direccionales
+        // A. MARCADORES DE INICIO Y FIN DEL VIAJE
+        const ini = viaje.inicio_coord;
+        const fin = viaje.fin_coord;
+
+        const iconIni = L.divIcon({{
+          className: '',
+          html: `<div class="badge-label badge-start">🏁 Inicio ${{viaje.nombre}} (${{viaje.hora_inicio}})</div>`,
+          iconAnchor: [30, 24]
+        }});
+        capaHitos.addLayer(L.marker([ini[0], ini[1]], {{ icon: iconIni }}));
+
+        const iconFin = L.divIcon({{
+          className: '',
+          html: `<div class="badge-label badge-end">⏹️ Fin ${{viaje.nombre}} (${{viaje.hora_fin}})</div>`,
+          iconAnchor: [30, 24]
+        }});
+        capaHitos.addLayer(L.marker([fin[0], fin[1]], {{ icon: iconFin }}));
+
+        // B. PRIMER NODO DESPUÉS DE LA DETENCIÓN (Reanudación)
+        if (viaje.reanudacion) {{
+          const r = viaje.reanudacion;
+          const iconResume = L.divIcon({{
+            className: '',
+            html: `<div class="badge-label badge-resume">⚡ Salida tras parada: ${{r.hora}}</div>`,
+            iconAnchor: [40, 24]
+          }});
+          const mResume = L.marker([r.lat, r.lon], {{ icon: iconResume }}).bindPopup(`
+            <b>⚡ REANUDACIÓN DE MARCHA</b><br>
+            Hora de arranque: ${{r.hora}}<br>
+            Velocidad inicial: ${{r.vel}} km/h
+          `);
+          capaHitos.addLayer(mResume);
+        }}
+
+        // C. FLECHAS DE DIRECCIÓN Y EXCESOS
         viaje.flechas.forEach(f => {{
           const esExceso = f.es_exceso;
-          const colorIcono = esExceso ? '#ef4444' : colorFlecha;
+          const colorIcono = esExceso ? '#ef4444' : '#1d4ed8';
           const tamano = esExceso ? 18 : 13;
 
           const svg = `
@@ -538,62 +644,84 @@ def generar_html_mapa(vehiculos, dias, datos):
                 <b>Lugar:</b> ${{f.direccion}}
               </div>
             `);
+            capaHitos.addLayer(marker);
           }} else {{
             marker.bindTooltip(`${{f.hora}} | ${{f.vel}} km/h`, {{ direction: 'top', offset: [0, -6] }});
+            capaRutas.addLayer(marker);
           }}
-          capaRutas.addLayer(marker);
+        }});
+
+        // D. MARCAS DE TIEMPO INTERMEDIAS SEGÚN ZOOM
+        pts.forEach((p, idxPt) => {{
+          // Zoom medio: cada ~20 muestras (~10-15 minutos)
+          if (idxPt > 0 && idxPt < pts.length - 1 && idxPt % 25 === 0) {{
+            const badgeMedio = L.marker([p.lat, p.lon], {{
+              icon: L.divIcon({{
+                className: '',
+                html: `<div class="badge-label" style="background:rgba(30,41,59,0.75); font-size:9px;">⏱️ ${{p.hora}}</div>`,
+                iconAnchor: [20, 10]
+              }})
+            }});
+            capaTiemposZoomMedio.addLayer(badgeMedio);
+          }}
+          // Zoom cercano: cada 5 muestras (~2-3 minutos)
+          if (idxPt > 0 && idxPt < pts.length - 1 && idxPt % 6 === 0) {{
+            const badgeCercano = L.circleMarker([p.lat, p.lon], {{
+              radius: 4,
+              color: '#3b82f6',
+              fillColor: '#ffffff',
+              fillOpacity: 1,
+              weight: 2
+            }}).bindTooltip(`<b>${{p.hora}}</b> | ${{p.vel}} km/h`, {{ permanent: false, direction: 'top' }});
+            capaTiemposZoomCercano.addLayer(badgeCercano);
+          }}
         }});
       }});
 
-      // Actualizar marcador de Inicio y Fin general del día
-      if (indicesActivos.length > 0) {{
-        const ptIni = infoDia.inicio_dia;
-        const ptFin = infoDia.fin_dia;
-
-        capaRutas.addLayer(L.circleMarker([ptIni[0], ptIni[1]], {{
-          radius: 7, color: '#15803d', fillColor: '#22c55e', fillOpacity: 1, weight: 2
-        }}).bindPopup(`<b>PUNTO INICIO DEL DÍA</b><br>${{veh}}<br>Hora: ${{ptIni[2]}}`));
-
-        capaRutas.addLayer(L.circleMarker([ptFin[0], ptFin[1]], {{
-          radius: 7, color: '#0f172a', fillColor: '#0f172a', fillOpacity: 1, weight: 2
-        }}).bindPopup(`<b>PUNTO TÉRMINO DEL DÍA</b><br>${{veh}}<br>Hora: ${{ptFin[2]}}`));
-      }}
-
-      // Actualizar indicador de KM en el panel
       document.getElementById('total-km-badge').textContent = kmTotales.toFixed(1) + " km";
 
       if (bounds.length > 0) {{
-        map.fitBounds(bounds, {{ padding: [30, 30] }});
+        map.fitBounds(bounds, {{ padding: [35, 35] }});
+      }}
+
+      controlarCapasPorZoom();
+    }}
+
+    // Control dinámico de densidad de etiquetas según zoom
+    function controlarCapasPorZoom() {{
+      const z = map.getZoom();
+      if (z >= 13) {{
+        if (!map.hasLayer(capaTiemposZoomMedio)) map.addLayer(capaTiemposZoomMedio);
+      }} else {{
+        if (map.hasLayer(capaTiemposZoomMedio)) map.removeLayer(capaTiemposZoomMedio);
+      }}
+
+      if (z >= 15) {{
+        if (!map.hasLayer(capaTiemposZoomCercano)) map.addLayer(capaTiemposZoomCercano);
+      }} else {{
+        if (map.hasLayer(capaTiemposZoomCercano)) map.removeLayer(capaTiemposZoomCercano);
       }}
     }}
 
-    // Navegación rápida
+    map.on('zoomend', controlarCapasPorZoom);
+
     function irAPunto(tipo) {{
       const veh = selVeh.value;
       const dia = selDia.value;
       if (!datosGPS[veh] || !datosGPS[veh][dia]) return;
-      const infoDia = datosGPS[veh][dia];
-      const coords = tipo === 'inicio' ? infoDia.inicio_dia : infoDia.fin_dia;
+      const coords = tipo === 'inicio' ? datosGPS[veh][dia].inicio_dia : datosGPS[veh][dia].fin_dia;
       map.flyTo([coords[0], coords[1]], 16, {{ duration: 1 }});
     }}
 
-    // Eventos
     selVeh.addEventListener('change', refrescarOpcionesDia);
     selDia.addEventListener('change', refrescarOpcionesDia);
+    document.getElementById('check-gradiente').addEventListener('change', actualizarMapa);
 
-    document.getElementById('route-color').addEventListener('input', (e) => {{
-      document.getElementById('route-hex').textContent = e.target.value;
-      document.getElementById('route-hex').style.color = e.target.value;
-      actualizarMapa();
-    }});
-
-    // Inicio automático
     refrescarOpcionesDia();
   </script>
 </body>
 </html>
 """
-    return html
 
 if __name__ == "__main__":
     os.makedirs("docs", exist_ok=True)
@@ -604,4 +732,4 @@ if __name__ == "__main__":
     ruta = os.path.join("docs", "rutas_gps.html")
     with open(ruta, "w", encoding="utf-8") as f:
         f.write(html_out)
-    print(f"Mapa interactivo con viajes generado exitosamente en: {ruta}")
+    print(f"Visor GPS avanzado generado exitosamente en: {ruta}")
