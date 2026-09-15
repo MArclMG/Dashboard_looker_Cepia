@@ -1,9 +1,23 @@
 import os
 import math
 import json
+import html as html_lib
+import tempfile
 import pandas as pd
 import gspread
 import google.auth
+
+
+UMBRAL_CORTE_VIAJE_MIN = float(os.environ.get("GPS_UMBRAL_CORTE_MIN", "25"))
+UMBRAL_DETECCION_PARADA_MIN = float(os.environ.get("GPS_UMBRAL_PARADA_MIN", "3"))
+RADIO_PARADA_M = float(os.environ.get("GPS_RADIO_PARADA_M", "45"))
+VELOCIDAD_PARADA_KMH = float(os.environ.get("GPS_VELOCIDAD_PARADA_KMH", "5"))
+VELOCIDAD_IMPLICITA_MAX_KMH = float(os.environ.get("GPS_VELOCIDAD_IMPLICITA_MAX_KMH", "220"))
+ZONA_HORARIA = os.environ.get("GPS_TIMEZONE", "America/Santiago")
+FORMATO_FECHA_HORA = os.environ.get("GPS_DATETIME_FORMAT", "").strip() or None
+
+COLUMNAS_OBLIGATORIAS = {"Vehículo", "Fecha", "Hora", "Latitud", "Longitud", "Velocidad"}
+DEFAULT_SPREADSHEET_ID = "1n-edOD5p1K99m2m78SoTlJSnXDU_rY69Vxk5yttPgHg"
 
 def calcular_azimut(lat1, lon1, lat2, lon2):
     p1_lat, p1_lon = math.radians(lat1), math.radians(lon1)
@@ -21,16 +35,143 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 def obtener_datos():
     credentials, _ = google.auth.default(scopes=[
-        "https://www.googleapis.com/auth/spreadsheets.readonly",
-        "https://www.googleapis.com/auth/drive.readonly"
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
     ])
     gc = gspread.authorize(credentials)
-    spreadsheet_id = os.environ.get("GPS_SPREADSHEET_ID", "1n-edOD5p1K99m2m78SoTlJSnXDU_rY69Vxk5yttPgHg")
+    # Se mantiene el ID anterior para no romper el workflow existente.
+    # GPS_SPREADSHEET_ID permite reemplazarlo sin modificar el código.
+    spreadsheet_id = os.environ.get("GPS_SPREADSHEET_ID", DEFAULT_SPREADSHEET_ID)
     sh = gc.open_by_key(spreadsheet_id)
     ws = sh.worksheet("Looker_GPS")
     return pd.DataFrame(ws.get_all_records())
 
-def fusionar_paradas_cercanas(paradas, max_dist_m=45.0):
+
+def texto_limpio(valor, default=""):
+    if pd.isna(valor):
+        return default
+    # La fuente trae algunas direcciones con entidades como O&#039;Higgins.
+    # Se decodifican aquí y se vuelven a escapar al renderizar el HTML.
+    texto = html_lib.unescape(str(valor).strip())
+    return texto if texto and texto.lower() not in {"none", "null", "nan"} else default
+
+
+def evento_motor_off(valor):
+    texto = texto_limpio(valor).upper()
+    return any(token in texto for token in (
+        "MOTOR OFF", "IGNITION OFF", "IGNICIÓN OFF", "IGNICION OFF", "ENCENDIDO OFF", "APAGADO"
+    ))
+
+
+def calcular_km_segmento(filas):
+    """Usa el odómetro de la fuente cuando es consistente; Haversine queda como respaldo."""
+    km_haversine = sum(
+        haversine_km(
+            filas[k-1]['Latitud'], filas[k-1]['Longitud'],
+            filas[k]['Latitud'], filas[k]['Longitud']
+        ) for k in range(1, len(filas))
+    )
+    if 'Odometro' not in filas[0].index:
+        return km_haversine, "GPS"
+
+    odometros = pd.to_numeric(pd.Series([p.get('Odometro') for p in filas]), errors='coerce').dropna()
+    if len(odometros) < 2:
+        return km_haversine, "GPS"
+    deltas = odometros.diff().dropna()
+    km_odometro = float(odometros.iloc[-1] - odometros.iloc[0])
+    if km_odometro >= 0 and not (deltas < -0.05).any():
+        return km_odometro, "Odómetro"
+    return km_haversine, "GPS"
+
+
+def validar_y_normalizar(df):
+    faltantes = sorted(COLUMNAS_OBLIGATORIAS - set(df.columns))
+    if faltantes:
+        raise ValueError(f"Faltan columnas obligatorias: {', '.join(faltantes)}")
+    if df.empty:
+        raise ValueError("La hoja Looker_GPS no contiene registros")
+
+    df = df.copy()
+    df["Vehículo"] = df["Vehículo"].map(texto_limpio)
+    df["Latitud"] = pd.to_numeric(df["Latitud"], errors="coerce")
+    df["Longitud"] = pd.to_numeric(df["Longitud"], errors="coerce")
+    df["Velocidad"] = pd.to_numeric(df["Velocidad"], errors="coerce").fillna(0).clip(lower=0)
+
+    opciones = {"errors": "coerce"}
+    if FORMATO_FECHA_HORA:
+        opciones["format"] = FORMATO_FECHA_HORA
+    else:
+        opciones["dayfirst"] = True
+
+    if "Timestamp" in df.columns:
+        df["dt"] = pd.to_datetime(df["Timestamp"], **opciones)
+    else:
+        df["dt"] = pd.NaT
+
+    # Respaldo para filas sin Timestamp y para fuentes antiguas.
+    fecha_base = pd.to_datetime(df["Fecha"], errors="coerce", dayfirst=True)
+    texto_fecha = fecha_base.dt.strftime("%Y-%m-%d")
+    texto_dt = texto_fecha + " " + df["Hora"].astype(str).str.strip()
+    dt_respaldo = pd.to_datetime(texto_dt, **opciones)
+    df["dt"] = df["dt"].fillna(dt_respaldo)
+
+    validas = (
+        df["Vehículo"].ne("")
+        & df["dt"].notna()
+        & df["Latitud"].between(-90, 90)
+        & df["Longitud"].between(-180, 180)
+    )
+    descartadas = int((~validas).sum())
+    df = df.loc[validas].copy()
+    if df.empty:
+        raise ValueError("No quedaron registros válidos después de validar fecha, vehículo y coordenadas")
+
+    # La fuente representa horas locales. Localizarlas evita ambigüedad en cambios de hora.
+    if df["dt"].dt.tz is None:
+        df["dt"] = df["dt"].dt.tz_localize(
+            ZONA_HORARIA, ambiguous="NaT", nonexistent="shift_forward"
+        )
+        antes = len(df)
+        df = df.dropna(subset=["dt"])
+        descartadas += antes - len(df)
+
+    df = (
+        df.sort_values(["Vehículo", "dt"])
+        .drop_duplicates(subset=["Vehículo", "dt"], keep="last")
+        .reset_index(drop=True)
+    )
+    df["dia"] = df["dt"].dt.strftime("%Y-%m-%d")
+    df["hora_normalizada"] = df["dt"].dt.strftime("%H:%M:%S")
+
+    # Descarta puntos que exigirían una velocidad físicamente inverosímil.
+    conservar = []
+    saltos = 0
+    for _, grupo in df.groupby("Vehículo", sort=False):
+        ultimo_idx = None
+        for idx, fila in grupo.iterrows():
+            if ultimo_idx is None:
+                conservar.append(idx)
+                ultimo_idx = idx
+                continue
+            anterior = df.loc[ultimo_idx]
+            horas = (fila["dt"] - anterior["dt"]).total_seconds() / 3600.0
+            distancia = haversine_km(
+                anterior["Latitud"], anterior["Longitud"], fila["Latitud"], fila["Longitud"]
+            )
+            velocidad_implicita = distancia / horas if horas > 0 else float("inf")
+            if velocidad_implicita <= VELOCIDAD_IMPLICITA_MAX_KMH:
+                conservar.append(idx)
+                ultimo_idx = idx
+            else:
+                saltos += 1
+
+    df = df.loc[conservar].reset_index(drop=True)
+    if df.empty:
+        raise ValueError("Todos los registros fueron descartados como saltos GPS inválidos")
+    print(f"Registros válidos: {len(df)}; inválidos: {descartadas}; saltos GPS: {saltos}")
+    return df
+
+
+def fusionar_paradas_cercanas(paradas, max_dist_m=RADIO_PARADA_M):
     """
     Fusiona paradas consecutivas en el mismo sitio físico (< 45 m)
     evitando fragmentación por pings periódicos del GPS.
@@ -43,27 +184,24 @@ def fusionar_paradas_cercanas(paradas, max_dist_m=45.0):
         prev = fused[-1]
         dist_m = haversine_km(prev['lat'], prev['lon'], p['lat'], p['lon']) * 1000.0
         
-        # Si están en el mismo punto físico, se fusionan
-        if dist_m <= max_dist_m:
+        separacion_min = (p["_inicio_dt"] - prev["_fin_dt"]).total_seconds() / 60.0
+        mismo_viaje = p.get("viaje_idx") == prev.get("viaje_idx")
+        # Solo fusionar eventos realmente contiguos del mismo viaje.
+        if dist_m <= max_dist_m and mismo_viaje and 0 <= separacion_min <= 1.5:
             prev['fin'] = p['fin']
-            prev['duracion_min'] = round(prev['duracion_min'] + p['duracion_min'], 1)
+            prev['_fin_dt'] = p['_fin_dt']
+            prev['duracion_min'] = round(
+                (prev['_fin_dt'] - prev['_inicio_dt']).total_seconds() / 60.0, 1
+            )
             if p.get('tipo') == 'Motor Apagado' or prev.get('tipo') == 'Motor Apagado':
                 prev['tipo'] = 'Motor Apagado'
-            if p.get('viaje_idx', 0) > prev.get('viaje_idx', 0):
-                prev['viaje_idx'] = p.get('viaje_idx')
         else:
             fused.append(p)
             
     return fused
 
 def procesar_telemetria_viajes(df):
-    df['Latitud'] = pd.to_numeric(df['Latitud'], errors='coerce')
-    df['Longitud'] = pd.to_numeric(df['Longitud'], errors='coerce')
-    df['Velocidad'] = pd.to_numeric(df['Velocidad'], errors='coerce').fillna(0)
-    df = df.dropna(subset=['Latitud', 'Longitud'])
-    
-    df['dt'] = pd.to_datetime(df['Fecha'].astype(str) + ' ' + df['Hora'].astype(str), errors='coerce')
-    df = df.dropna(subset=['dt']).sort_values(by=['Vehículo', 'dt']).reset_index(drop=True)
+    df = validar_y_normalizar(df)
 
     conductores_default = {
         "lhjl 13": "Michele Castro", "lhjl-13": "Michele Castro",
@@ -74,7 +212,7 @@ def procesar_telemetria_viajes(df):
     }
 
     nombres_vehiculos = sorted(df['Vehículo'].unique().tolist())
-    dias = sorted(df['Fecha'].unique().tolist())
+    dias = sorted(df['dia'].unique().tolist())
     
     vehiculos_info = []
     estructura = {}
@@ -110,87 +248,124 @@ def procesar_telemetria_viajes(df):
         }
 
         for dia in dias:
-            sub = df_v[df_v['Fecha'] == dia].reset_index(drop=True)
+            sub = df_v[df_v['dia'] == dia].reset_index(drop=True)
             if sub.empty:
                 continue
 
-            UMBRAL_CORTE_VIAJE_MIN = 25.0
-            UMBRAL_DETECCION_PARADA_MIN = 3.0
-
             viajes = []
             paradas_candidatas = []
-            puntos_viaje_actual = []
-            nodo_reanudacion = None
-            viaje_actual_idx = 0
-            ultimo_punto_viaje_previo = None
+            intervalos_sin_telemetria = []
+            cortes = []  # (último punto del tramo anterior, primer punto del siguiente)
 
-            for i in range(len(sub)):
-                fila = sub.iloc[i]
-                puntos_viaje_actual.append(fila)
+            # Detectar permanencia real dentro de un radio, incluso con pings frecuentes.
+            inicio_cluster = None
+            cluster_motor_off = False
+            for i in range(len(sub) - 1):
+                actual, siguiente = sub.iloc[i], sub.iloc[i + 1]
+                delta_min = (siguiente['dt'] - actual['dt']).total_seconds() / 60.0
+                dist_m = haversine_km(
+                    actual['Latitud'], actual['Longitud'], siguiente['Latitud'], siguiente['Longitud']
+                ) * 1000.0
+                off = evento_motor_off(actual.get('Evento')) or evento_motor_off(siguiente.get('Evento'))
+                estado_detenido = (
+                    texto_limpio(actual.get('Estado')).casefold() == 'detenido'
+                    or texto_limpio(siguiente.get('Estado')).casefold() == 'detenido'
+                )
+                quieto = dist_m <= RADIO_PARADA_M and (
+                    off or estado_detenido
+                    or max(float(actual['Velocidad']), float(siguiente['Velocidad'])) <= VELOCIDAD_PARADA_KMH
+                )
 
-                if i < len(sub) - 1:
-                    siguiente = sub.iloc[i + 1]
-                    delta_min = (siguiente['dt'] - fila['dt']).total_seconds() / 60.0
-                    
-                    # Identificar eventos de ignición en la ventana
-                    ev_actual = str(fila.get('Evento', ''))
-                    ev_sig = str(siguiente.get('Evento', ''))
-                    hubo_motor_off = ('OFF' in ev_actual.upper()) or ('OFF' in ev_sig.upper())
-                    tipo_parada = "Motor Apagado" if hubo_motor_off else "Ralentí (Motor ON)"
-
-                    # 1. Registrar Parada si supera el umbral mínimo (>= 3 min)
-                    if delta_min >= UMBRAL_DETECCION_PARADA_MIN:
-                        paradas_candidatas.append({
-                            'viaje_idx': viaje_actual_idx,
-                            'inicio': str(fila['Hora']),
-                            'fin': str(siguiente['Hora']),
-                            'duracion_min': round(delta_min, 1),
-                            'tipo': tipo_parada,
-                            'lat': float(fila['Latitud']),
-                            'lon': float(fila['Longitud']),
-                            'direccion': str(fila.get('Direccion', 'En ruta'))
-                        })
-
-                    # 2. Cortar viaje macro únicamente en paradas prolongadas (>= 25 min)
+                # Un hueco grande es falta de telemetría, salvo evidencia espacial de permanencia.
+                if delta_min >= UMBRAL_DETECCION_PARADA_MIN and not quieto:
+                    intervalos_sin_telemetria.append({
+                        'inicio': actual['hora_normalizada'],
+                        'fin': siguiente['hora_normalizada'],
+                        'duracion_min': round(delta_min, 1),
+                        'lat_inicio': float(actual['Latitud']),
+                        'lon_inicio': float(actual['Longitud']),
+                        'lat_fin': float(siguiente['Latitud']),
+                        'lon_fin': float(siguiente['Longitud'])
+                    })
                     if delta_min >= UMBRAL_CORTE_VIAJE_MIN:
-                        # Asegurar continuidad: si veníamos de un viaje anterior, conectar el inicio
-                        if ultimo_punto_viaje_previo is not None and len(puntos_viaje_actual) > 0:
-                            if puntos_viaje_actual[0]['dt'] != ultimo_punto_viaje_previo['dt']:
-                                puntos_viaje_actual.insert(0, ultimo_punto_viaje_previo)
+                        cortes.append((i, i + 1))
 
-                        pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
-                        km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
-                        
-                        if km_viaje >= 0.3:
-                            viajes.append({
-                                'puntos': puntos_viaje_actual,
-                                'km': round(km_viaje, 1),
-                                'reanudacion': nodo_reanudacion
-                            })
-                            ultimo_punto_viaje_previo = puntos_viaje_actual[-1]
-                            viaje_actual_idx += 1
-                        
-                        puntos_viaje_actual = []
-                        nodo_reanudacion = {
-                            'lat': float(siguiente['Latitud']),
-                            'lon': float(siguiente['Longitud']),
-                            'hora': str(siguiente['Hora']),
-                            'vel': float(siguiente['Velocidad'])
-                        }
+                if quieto:
+                    if inicio_cluster is None:
+                        inicio_cluster = i
+                        cluster_motor_off = off
+                    else:
+                        cluster_motor_off = cluster_motor_off or off
+                elif inicio_cluster is not None:
+                    fin_cluster = i
+                    duracion = (sub.iloc[fin_cluster]['dt'] - sub.iloc[inicio_cluster]['dt']).total_seconds() / 60.0
+                    if duracion >= UMBRAL_DETECCION_PARADA_MIN:
+                        paradas_candidatas.append((inicio_cluster, fin_cluster, duracion, cluster_motor_off))
+                        if duracion >= UMBRAL_CORTE_VIAJE_MIN:
+                            cortes.append((inicio_cluster, fin_cluster))
+                    inicio_cluster = None
+                    cluster_motor_off = False
 
-            if puntos_viaje_actual:
-                if ultimo_punto_viaje_previo is not None and len(puntos_viaje_actual) > 0:
-                    if puntos_viaje_actual[0]['dt'] != ultimo_punto_viaje_previo['dt']:
-                        puntos_viaje_actual.insert(0, ultimo_punto_viaje_previo)
+            if inicio_cluster is not None:
+                fin_cluster = len(sub) - 1
+                duracion = (sub.iloc[fin_cluster]['dt'] - sub.iloc[inicio_cluster]['dt']).total_seconds() / 60.0
+                if duracion >= UMBRAL_DETECCION_PARADA_MIN:
+                    paradas_candidatas.append((inicio_cluster, fin_cluster, duracion, cluster_motor_off))
+                    if duracion >= UMBRAL_CORTE_VIAJE_MIN:
+                        cortes.append((inicio_cluster, fin_cluster))
 
-                pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
-                km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
+            # Construir viajes sin insertar puntos del tramo previo ni contar huecos.
+            cortes = sorted(set(cortes))
+            segmentos = []
+            inicio = 0
+            for izquierda, derecha in cortes:
+                if izquierda >= inicio:
+                    segmentos.append(sub.iloc[inicio:izquierda + 1])
+                inicio = max(inicio, derecha)
+            if inicio < len(sub):
+                segmentos.append(sub.iloc[inicio:])
+
+            for segmento in segmentos:
+                if len(segmento) < 2:
+                    continue
+                filas = [fila for _, fila in segmento.iterrows()]
+                km_viaje, metodo_km = calcular_km_segmento(filas)
                 if km_viaje >= 0.3:
                     viajes.append({
-                        'puntos': puntos_viaje_actual,
-                        'km': round(km_viaje, 1),
-                        'reanudacion': nodo_reanudacion
+                        'puntos': filas, 'km_raw': km_viaje,
+                        'metodo_km': metodo_km, 'reanudacion': None
                     })
+
+            # Conductor específico del día, no el más frecuente de todo el período.
+            conductor_dia = conductor_vehiculo
+            if 'Conductor' in sub.columns:
+                candidatos = sub['Conductor'].map(texto_limpio)
+                candidatos = candidatos[candidatos.ne('')]
+                if not candidatos.empty:
+                    conductor_dia = candidatos.mode().iloc[0]
+
+            # Relacionar cada parada con el viaje inmediatamente anterior o posterior.
+            paradas_normalizadas = []
+            for inicio_p, fin_p, duracion, motor_off in paradas_candidatas:
+                fila_ini, fila_fin = sub.iloc[inicio_p], sub.iloc[fin_p]
+                viaje_idx = 0
+                for idx_v, item in enumerate(viajes):
+                    if item['puntos'][0]['dt'] <= fila_ini['dt']:
+                        viaje_idx = idx_v
+                paradas_normalizadas.append({
+                    'viaje_idx': viaje_idx,
+                    'inicio': fila_ini['hora_normalizada'],
+                    'fin': fila_fin['hora_normalizada'],
+                    'duracion_min': round(duracion, 1),
+                    'tipo': 'Motor Apagado' if motor_off else 'Detención confirmada',
+                    'lat': float(fila_ini['Latitud']),
+                    'lon': float(fila_ini['Longitud']),
+                    'direccion': texto_limpio(fila_ini.get('Direccion'), 'Sin dirección'),
+                    '_inicio_dt': fila_ini['dt'],
+                    '_fin_dt': fila_fin['dt']
+                })
+
+            paradas_candidatas = paradas_normalizadas
 
             # FUSIONAR PARADAS CONTIGUAS (< 45 metros)
             paradas_fusionadas = fusionar_paradas_cercanas(paradas_candidatas)
@@ -198,7 +373,7 @@ def procesar_telemetria_viajes(df):
             viajes_json = []
             for num_v, v_item in enumerate(viajes):
                 pts_v = v_item['puntos']
-                km_v = v_item['km']
+                km_v = v_item['km_raw']
                 puntos_detallados = []
                 flechas = []
 
@@ -206,7 +381,7 @@ def procesar_telemetria_viajes(df):
                     fila = pts_v[i]
                     lat, lon = float(fila['Latitud']), float(fila['Longitud'])
                     vel = float(fila['Velocidad'])
-                    hora = str(fila['Hora'])
+                    hora = fila['hora_normalizada']
 
                     angulo = 0
                     if i < len(pts_v) - 1:
@@ -238,9 +413,11 @@ def procesar_telemetria_viajes(df):
 
                 viajes_json.append({
                     'nombre': f"Viaje {num_v + 1}",
-                    'km': km_v,
-                    'hora_inicio': str(pts_v[0]['Hora']),
-                    'hora_fin': str(pts_v[-1]['Hora']),
+                    'km': round(km_v, 1),
+                    'km_raw': round(km_v, 4),
+                    'metodo_km': v_item['metodo_km'],
+                    'hora_inicio': pts_v[0]['hora_normalizada'],
+                    'hora_fin': pts_v[-1]['hora_normalizada'],
                     'inicio_coord': [float(pts_v[0]['Latitud']), float(pts_v[0]['Longitud'])],
                     'fin_coord': [float(pts_v[-1]['Latitud']), float(pts_v[-1]['Longitud'])],
                     'reanudacion': v_item['reanudacion'],
@@ -248,19 +425,35 @@ def procesar_telemetria_viajes(df):
                     'flechas': flechas
                 })
 
+            for parada in paradas_fusionadas:
+                parada.pop('_inicio_dt', None)
+                parada.pop('_fin_dt', None)
+
             estructura[v]['dias'][dia] = {
+                'conductor': conductor_dia,
                 'viajes': viajes_json,
                 'paradas': paradas_fusionadas,
-                'inicio_dia': [float(sub.iloc[0]['Latitud']), float(sub.iloc[0]['Longitud']), str(sub.iloc[0]['Hora'])],
-                'fin_dia': [float(sub.iloc[-1]['Latitud']), float(sub.iloc[-1]['Longitud']), str(sub.iloc[-1]['Hora'])]
+                'intervalos_sin_telemetria': intervalos_sin_telemetria,
+                'inicio_dia': [float(sub.iloc[0]['Latitud']), float(sub.iloc[0]['Longitud']), sub.iloc[0]['hora_normalizada']],
+                'fin_dia': [float(sub.iloc[-1]['Latitud']), float(sub.iloc[-1]['Longitud']), sub.iloc[-1]['hora_normalizada']]
             }
 
     return vehiculos_info, dias, estructura
 
 def generar_html_mapa(vehiculos_info, dias, datos):
-    datos_json = json.dumps(datos)
-    vehiculos_json = json.dumps(vehiculos_info)
-    dias_json = json.dumps(dias)
+    def json_seguro_para_script(valor):
+        return (
+            json.dumps(valor, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029")
+        )
+
+    datos_json = json_seguro_para_script(datos)
+    vehiculos_json = json_seguro_para_script(vehiculos_info)
+    dias_json = json_seguro_para_script(dias)
 
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -403,6 +596,19 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       background: #fff;
       padding: 4px;
     }}
+    .telemetry-box {{
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      color: #991b1b;
+      font-size: 11px;
+    }}
+    .telemetry-item {{
+      padding: 4px 0;
+      border-bottom: 1px solid #fee2e2;
+    }}
     .stop-card {{
       padding: 5px 6px;
       border-bottom: 1px solid #f1f5f9;
@@ -524,6 +730,11 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       <div class="stops-container" id="stops-list"></div>
     </div>
 
+    <div class="telemetry-box">
+      <b id="label-telemetria">Intervalos sin telemetría: 0</b>
+      <div id="telemetry-list"></div>
+    </div>
+
     <div class="form-group">
       <label>Visualización Temporal de Ruta</label>
       <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; margin-bottom:4px;">
@@ -560,6 +771,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
     let capaRutas = L.featureGroup().addTo(map);
     let capaHitos = L.featureGroup().addTo(map);
     let capaParadas = L.featureGroup().addTo(map);
+    let capaTelemetria = L.featureGroup().addTo(map);
     let capaTiemposZoomMedio = L.featureGroup().addTo(map);
     let capaTiemposZoomCercano = L.featureGroup().addTo(map);
 
@@ -585,12 +797,25 @@ def generar_html_mapa(vehiculos_info, dias, datos):
     }});
 
     const selDia = document.getElementById('select-dia');
-    listaDias.forEach(d => {{
-      const opt = document.createElement('option');
-      opt.value = d;
-      opt.textContent = d;
-      selDia.appendChild(opt);
-    }});
+
+    function esc(valor) {{
+      return String(valor ?? '').replace(/[&<>"']/g, caracter => ({{
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }})[caracter]);
+    }}
+
+    function cargarDiasDelVehiculo(conservarSeleccion = true) {{
+      const seleccionAnterior = conservarSeleccion ? selDia.value : '';
+      const diasVehiculo = Object.keys(datosGPS[selVeh.value]?.dias || {{}}).sort();
+      selDia.replaceChildren();
+      diasVehiculo.forEach(d => {{
+        const opt = document.createElement('option');
+        opt.value = d;
+        opt.textContent = d;
+        selDia.appendChild(opt);
+      }});
+      if (diasVehiculo.includes(seleccionAnterior)) selDia.value = seleccionAnterior;
+    }}
 
     function colorGradiente(t) {{
       let r, g, b;
@@ -618,15 +843,14 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       if (!datosGPS[vehId]) return;
 
       const infoVeh = datosGPS[vehId];
-      document.getElementById('conductor-nombre').textContent = infoVeh.conductor || "Sin Asignar";
+      const infoDia = infoVeh.dias[dia];
+      document.getElementById('conductor-nombre').textContent = infoDia?.conductor || infoVeh.conductor || "Sin Asignar";
 
-      if (!infoVeh.dias[dia]) {{
+      if (!infoDia) {{
         tripsList.innerHTML = '<div style="color:#64748b; padding:4px;">Sin datos para este día.</div>';
         actualizarMapa();
         return;
       }}
-
-      const infoDia = infoVeh.dias[dia];
 
       infoDia.viajes.forEach((v, idx) => {{
         const row = document.createElement('div');
@@ -634,7 +858,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
         row.innerHTML = `
           <label style="display:flex; align-items:center; cursor:pointer;">
             <input type="checkbox" class="trip-cb" data-idx="${{idx}}" checked>
-            <b>${{v.nombre}}</b> (${{v.hora_inicio}} - ${{v.hora_fin}})
+            <b>${{esc(v.nombre)}}</b> (${{esc(v.hora_inicio)}} - ${{esc(v.hora_fin)}})
           </label>
           <span style="color:#0284c7; font-weight:700;">${{v.km}} km</span>
         `;
@@ -677,19 +901,19 @@ def generar_html_mapa(vehiculos_info, dias, datos):
 
         const esMotorOff = p.tipo === "Motor Apagado";
         const badgeClass = esMotorOff ? "stop-badge-off" : "stop-badge-idle";
-        const iconPrefix = esMotorOff ? "🛑 Faena (OFF)" : "⏳ Ralentí (ON)";
+        const iconPrefix = esMotorOff ? "🛑 Motor apagado" : "📍 Detención confirmada";
 
         const card = document.createElement('div');
         card.className = 'stop-card';
         card.innerHTML = `
-          <div><span class="${{badgeClass}}">${{iconPrefix}} #${{pIdx + 1}} (${{durStr}}):</span> ${{p.inicio}} &rarr; ${{p.fin}}</div>
-          <div style="color:#475569; font-size:10px; margin-top:2px;">${{p.direccion}}</div>
+          <div><span class="${{badgeClass}}">${{iconPrefix}} #${{pIdx + 1}} (${{durStr}}):</span> ${{esc(p.inicio)}} &rarr; ${{esc(p.fin)}}</div>
+          <div style="color:#475569; font-size:10px; margin-top:2px;">${{esc(p.direccion)}}</div>
         `;
         card.onclick = () => {{
           map.flyTo([p.lat, p.lon], 16, {{ duration: 1 }});
           L.popup()
             .setLatLng([p.lat, p.lon])
-            .setContent(`<b>${{iconPrefix.toUpperCase()}} #${{pIdx + 1}}</b><br>Conductor: <b>${{conductor}}</b><br>Horario: ${{p.inicio}} &rarr; ${{p.fin}}<br>Duración: ${{durStr}}<br>Estado Motor: <b>${{p.tipo}}</b><br>Lugar: ${{p.direccion}}`)
+            .setContent(`<b>${{iconPrefix.toUpperCase()}} #${{pIdx + 1}}</b><br>Conductor: <b>${{esc(conductor)}}</b><br>Horario: ${{esc(p.inicio)}} &rarr; ${{esc(p.fin)}}<br>Duración: ${{durStr}}<br>Clasificación: <b>${{esc(p.tipo)}}</b><br>Lugar: ${{esc(p.direccion)}}`)
             .openOn(map);
         }};
         stopsList.appendChild(card);
@@ -711,11 +935,11 @@ def generar_html_mapa(vehiculos_info, dias, datos):
           }}).bindPopup(`
             <div style="font-size:12px; line-height:1.4;">
               <b style="color:${{colorBorde}}; font-size:13px;">${{iconPrefix.toUpperCase()}}</b><br>
-              <b>Conductor:</b> ${{conductor}}<br>
+              <b>Conductor:</b> ${{esc(conductor)}}<br>
               <b>Duración:</b> ${{durStr}}<br>
-              <b>Horario:</b> ${{p.inicio}} &rarr; ${{p.fin}}<br>
-              <b>Condición:</b> ${{p.tipo}}<br>
-              <b>Lugar:</b> ${{p.direccion}}
+              <b>Horario:</b> ${{esc(p.inicio)}} &rarr; ${{esc(p.fin)}}<br>
+              <b>Condición:</b> ${{esc(p.tipo)}}<br>
+              <b>Lugar:</b> ${{esc(p.direccion)}}
             </div>
           `);
 
@@ -725,9 +949,33 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       }});
     }}
 
+    function renderizarIntervalosSinTelemetria(intervalos) {{
+      capaTelemetria.clearLayers();
+      const lista = document.getElementById('telemetry-list');
+      lista.replaceChildren();
+      document.getElementById('label-telemetria').textContent =
+        `Intervalos sin telemetría: ${{intervalos.length}}`;
+
+      intervalos.forEach((item, idx) => {{
+        const fila = document.createElement('div');
+        fila.className = 'telemetry-item';
+        fila.textContent = `⚠ ${{item.inicio}} → ${{item.fin}} (${{item.duracion_min}} min)`;
+        lista.appendChild(fila);
+
+        const linea = L.polyline(
+          [[item.lat_inicio, item.lon_inicio], [item.lat_fin, item.lon_fin]],
+          {{ color: '#dc2626', weight: 2, opacity: 0.65, dashArray: '7 7' }}
+        ).bindTooltip(
+          `<b>Sin telemetría</b><br>${{esc(item.inicio)}} → ${{esc(item.fin)}}<br>${{item.duracion_min}} min<br>Este tramo no se suma a la distancia.`
+        );
+        capaTelemetria.addLayer(linea);
+      }});
+    }}
+
     function actualizarMapa() {{
       capaRutas.clearLayers();
       capaHitos.clearLayers();
+      capaTelemetria.clearLayers();
       capaTiemposZoomMedio.clearLayers();
       capaTiemposZoomCercano.clearLayers();
 
@@ -741,15 +989,17 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       if (!datosGPS[vehId] || !datosGPS[vehId].dias[dia]) {{
         document.getElementById('total-km-badge').textContent = "0.0 km";
         renderizarParadas([], "", []);
+        renderizarIntervalosSinTelemetria([]);
         return;
       }}
 
       const infoVeh = datosGPS[vehId];
       const infoDia = infoVeh.dias[dia];
-      const conductor = infoVeh.conductor;
+      const conductor = infoDia.conductor || infoVeh.conductor;
       const placa = infoVeh.placa;
 
       renderizarParadas(infoDia.paradas, conductor, indicesActivos);
+      renderizarIntervalosSinTelemetria(infoDia.intervalos_sin_telemetria || []);
 
       let kmTotales = 0.0;
       const bounds = [];
@@ -758,7 +1008,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
         const viaje = infoDia.viajes[idx];
         if (!viaje) return;
 
-        kmTotales += viaje.km;
+        kmTotales += viaje.km_raw ?? viaje.km;
         const pts = viaje.puntos;
 
         for (let i = 0; i < pts.length - 1; i++) {{
@@ -771,7 +1021,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
             weight: 5,
             opacity: 0.88,
             lineJoin: 'round'
-          }}).bindTooltip(`<b>${{viaje.nombre}}</b><br>Conductor: <b>${{conductor}}</b><br>Hora: ${{p1.hora}}<br>Velocidad: ${{p1.vel}} km/h`);
+          }}).bindTooltip(`<b>${{esc(viaje.nombre)}}</b><br>Conductor: <b>${{esc(conductor)}}</b><br>Hora: ${{esc(p1.hora)}}<br>Velocidad: ${{p1.vel}} km/h`);
           capaRutas.addLayer(segLine);
           bounds.push([p1.lat, p1.lon]);
         }}
@@ -785,14 +1035,14 @@ def generar_html_mapa(vehiculos_info, dias, datos):
           html: `<div class="badge-label badge-start">🏁 Inicio ${{viaje.nombre}} (${{viaje.hora_inicio}})</div>`,
           iconAnchor: [30, 24]
         }});
-        capaHitos.addLayer(L.marker([ini[0], ini[1]], {{ icon: iconIni }}).bindPopup(`<b>🏁 INICIO DE ${{viaje.nombre.toUpperCase()}}</b><br>Vehículo: ${{placa}}<br>Conductor: <b>${{conductor}}</b><br>Hora: ${{viaje.hora_inicio}}`));
+        capaHitos.addLayer(L.marker([ini[0], ini[1]], {{ icon: iconIni }}).bindPopup(`<b>🏁 INICIO DE ${{esc(viaje.nombre.toUpperCase())}}</b><br>Vehículo: ${{esc(placa)}}<br>Conductor: <b>${{esc(conductor)}}</b><br>Hora: ${{esc(viaje.hora_inicio)}}`));
 
         const iconFin = L.divIcon({{
           className: '',
           html: `<div class="badge-label badge-end">⏹️ Fin ${{viaje.nombre}} (${{viaje.hora_fin}})</div>`,
           iconAnchor: [30, 24]
         }});
-        capaHitos.addLayer(L.marker([fin[0], fin[1]], {{ icon: iconFin }}).bindPopup(`<b>⏹️ FIN DE ${{viaje.nombre.toUpperCase()}}</b><br>Vehículo: ${{placa}}<br>Conductor: <b>${{conductor}}</b><br>Hora: ${{viaje.hora_fin}}`));
+        capaHitos.addLayer(L.marker([fin[0], fin[1]], {{ icon: iconFin }}).bindPopup(`<b>⏹️ FIN DE ${{esc(viaje.nombre.toUpperCase())}}</b><br>Vehículo: ${{esc(placa)}}<br>Conductor: <b>${{esc(conductor)}}</b><br>Hora: ${{esc(viaje.hora_fin)}}`));
 
         if (viaje.reanudacion) {{
           const r = viaje.reanudacion;
@@ -803,8 +1053,8 @@ def generar_html_mapa(vehiculos_info, dias, datos):
           }});
           capaHitos.addLayer(L.marker([r.lat, r.lon], {{ icon: iconResume }}).bindPopup(`
             <b>⚡ REANUDACIÓN DE MARCHA</b><br>
-            Conductor: <b>${{conductor}}</b><br>
-            Hora de arranque: ${{r.hora}}<br>
+            Conductor: <b>${{esc(conductor)}}</b><br>
+            Hora de arranque: ${{esc(r.hora)}}<br>
             Velocidad inicial: ${{r.vel}} km/h
           `));
         }}
@@ -830,11 +1080,11 @@ def generar_html_mapa(vehiculos_info, dias, datos):
             marker.bindPopup(`
               <div style="font-size:12px; line-height:1.4;">
                 <b style="color:#b91c1c; font-size:13px;">⚠️ EXCESO DE VELOCIDAD</b><br>
-                <b>Vehículo:</b> ${{placa}}<br>
-                <b>Conductor:</b> <b>${{conductor}}</b><br>
+                <b>Vehículo:</b> ${{esc(placa)}}<br>
+                <b>Conductor:</b> <b>${{esc(conductor)}}</b><br>
                 <b>Velocidad:</b> ${{f.vel}} km/h<br>
-                <b>Hora:</b> ${{f.hora}}<br>
-                <b>Lugar:</b> ${{f.direccion}}
+                <b>Hora:</b> ${{esc(f.hora)}}<br>
+                <b>Lugar:</b> ${{esc(f.direccion)}}
               </div>
             `);
             capaHitos.addLayer(marker);
@@ -908,11 +1158,15 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       if (datosGPS[vehId] && datosGPS[vehId].dias[dia]) {{
         const cbs = document.querySelectorAll('.trip-cb:checked');
         const indicesActivos = Array.from(cbs).map(cb => parseInt(cb.dataset.idx));
-        renderizarParadas(datosGPS[vehId].dias[dia].paradas, datosGPS[vehId].conductor, indicesActivos);
+        const infoDia = datosGPS[vehId].dias[dia];
+        renderizarParadas(infoDia.paradas, infoDia.conductor || datosGPS[vehId].conductor, indicesActivos);
       }}
     }}
 
-    selVeh.addEventListener('change', refrescarOpcionesDia);
+    selVeh.addEventListener('change', () => {{
+      cargarDiasDelVehiculo(false);
+      refrescarOpcionesDia();
+    }});
     selDia.addEventListener('change', refrescarOpcionesDia);
     document.getElementById('check-gradiente').addEventListener('change', actualizarMapa);
 
@@ -920,6 +1174,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
     document.getElementById('check-mostrar-paradas').addEventListener('change', refrescarFiltroParadas);
     document.getElementById('check-tamano-proporcional').addEventListener('change', refrescarFiltroParadas);
 
+    cargarDiasDelVehiculo(false);
     refrescarOpcionesDia();
   </script>
 </body>
@@ -930,9 +1185,22 @@ if __name__ == "__main__":
     os.makedirs("docs", exist_ok=True)
     df_raw = obtener_datos()
     vehiculos_info, dias, estructura = procesar_telemetria_viajes(df_raw)
+    if not vehiculos_info or not any(info['dias'] for info in estructura.values()):
+        raise RuntimeError("La actualización no produjo vehículos/días válidos; se conserva el HTML anterior")
     html_out = generar_html_mapa(vehiculos_info, dias, estructura)
 
     ruta = os.path.join("docs", "rutas_gps.html")
-    with open(ruta, "w", encoding="utf-8") as f:
-        f.write(html_out)
-    print(f"Visor GPS actualizado con continuidad de rutas y paradas consolidadas: {ruta}")
+    temporal = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir="docs", prefix="rutas_gps_", suffix=".tmp", delete=False
+        ) as f:
+            temporal = f.name
+            f.write(html_out)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporal, ruta)
+    finally:
+        if temporal and os.path.exists(temporal):
+            os.unlink(temporal)
+    print(f"Visor GPS actualizado de forma atómica: {ruta}")
