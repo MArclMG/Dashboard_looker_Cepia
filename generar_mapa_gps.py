@@ -88,10 +88,14 @@ def procesar_telemetria_viajes(df):
             if sub.empty:
                 continue
 
+            UMBRAL_CORTE_VIAJE_MIN = 25.0
+            UMBRAL_DETECCION_PARADA_MIN = 3.0
+
             viajes = []
             paradas = []
             puntos_viaje_actual = []
             nodo_reanudacion = None
+            viaje_actual_idx = 0
 
             for i in range(len(sub)):
                 fila = sub.iloc[i]
@@ -101,11 +105,10 @@ def procesar_telemetria_viajes(df):
                     siguiente = sub.iloc[i + 1]
                     delta_min = (siguiente['dt'] - fila['dt']).total_seconds() / 60.0
                     
-                    # Umbral mínimo para capturar parada en datos: >= 3 minutos
-                    # 1. DETECCIÓN DE PARADA (para el selector dinámico de la web):
-                    # Guarda cualquier detención >= 3 min sin romper el viaje
-                    if delta_min >= 3.0:
+                    # 1. Registrar Parada con vinculación a viaje_idx
+                    if delta_min >= UMBRAL_DETECCION_PARADA_MIN:
                         paradas.append({
+                            'viaje_idx': viaje_actual_idx,
                             'inicio': str(fila['Hora']),
                             'fin': str(siguiente['Hora']),
                             'duracion_min': round(delta_min, 1),
@@ -114,9 +117,8 @@ def procesar_telemetria_viajes(df):
                             'direccion': str(fila.get('Direccion', 'En ruta'))
                         })
 
-                    # 2. CORTE DE VIAJE MACRO (Ida / Faena / Vuelta):
-                    # Solo corta y divide en un nuevo "Viaje" si estuvo detenido 25 minutos o más
-                    if delta_min >= 25.0:
+                    # 2. Partir viaje macro únicamente en paradas prolongadas (>= 25 min)
+                    if delta_min >= UMBRAL_CORTE_VIAJE_MIN:
                         pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
                         km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
                         
@@ -126,6 +128,7 @@ def procesar_telemetria_viajes(df):
                                 'km': round(km_viaje, 1),
                                 'reanudacion': nodo_reanudacion
                             })
+                            viaje_actual_idx += 1
                         puntos_viaje_actual = []
                         nodo_reanudacion = {
                             'lat': float(siguiente['Latitud']),
@@ -215,7 +218,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Visor de Rutas GPS, Conductores y Auditoría de Paradas</title>
+  <title>Visor de Rutas GPS y Auditoría de Flota</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -326,7 +329,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
     .trip-item {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; font-size: 12px; cursor: pointer; }}
     .trip-item input {{ margin-right: 6px; }}
 
-    /* Caja de Filtro de Paradas */
     .stops-box {{
       background: #fffbeb;
       border: 1px solid #fde68a;
@@ -404,7 +406,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
   <div class="control-panel" id="main-panel">
     <h4>Control de Rutas GPS</h4>
 
-    <!-- Capa Base Google Maps -->
     <div class="form-group">
       <label for="select-mapa">Capa Base</label>
       <select id="select-mapa">
@@ -415,7 +416,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       </select>
     </div>
 
-    <!-- Vehículo & Conductor -->
     <div class="form-group">
       <label for="select-vehiculo">Vehículo & Conductor</label>
       <select id="select-vehiculo"></select>
@@ -431,7 +431,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       <select id="select-dia"></select>
     </div>
 
-    <!-- Indicador de Kilómetros -->
     <div class="km-badge">
       <span>Distancia de Viajes:</span>
       <span id="total-km-badge">0.0 km</span>
@@ -442,13 +441,11 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       <button class="btn-nav" onclick="irAPunto('fin')">🏁 Fin del Día</button>
     </div>
 
-    <!-- Viajes Detectados -->
     <div class="form-group">
       <label>Viajes Detectados</label>
       <div class="trips-container" id="trips-list"></div>
     </div>
 
-    <!-- SELECTOR Y CONFIGURACIÓN DE PARADAS -->
     <div class="stops-box">
       <label for="select-umbral-parada">Filtro de Detención Mínima</label>
       <select id="select-umbral-parada">
@@ -473,13 +470,11 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       </div>
     </div>
 
-    <!-- Listado de Paradas Filtradas -->
     <div class="form-group">
       <label id="label-conteo-paradas">Paradas Filtradas</label>
       <div class="stops-container" id="stops-list"></div>
     </div>
 
-    <!-- Gradiente Temporal -->
     <div class="form-group">
       <label>Visualización Temporal de Ruta</label>
       <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; margin-bottom:4px;">
@@ -500,7 +495,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
     const listaVehiculos = {vehiculos_json};
     const listaDias = {dias_json};
 
-    // 1. Capas Google Maps
     const capas = {{
       satelite: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={{x}}&y={{y}}&z={{z}}', {{ maxZoom: 20, attribution: '&copy; Google Satellite' }}),
       calles: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={{x}}&y={{y}}&z={{z}}', {{ maxZoom: 20, attribution: '&copy; Google Maps' }}),
@@ -525,7 +519,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       capas[e.target.value].addTo(map);
     }});
 
-    // 2. Colapsar / Expandir Panel
     const toggleBtn = document.getElementById('toggle-panel-btn');
     const mainPanel = document.getElementById('main-panel');
     toggleBtn.addEventListener('click', () => {{
@@ -534,7 +527,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       toggleBtn.textContent = estaOculto ? '▶' : '◀';
     }});
 
-    // 3. Llenar Selectores
     const selVeh = document.getElementById('select-vehiculo');
     listaVehiculos.forEach(v => {{
       const opt = document.createElement('option');
@@ -567,7 +559,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       return `rgb(${{r}},${{g}},${{b}})`;
     }}
 
-    // 4. Refrescar Viajes y Paradas
     function refrescarOpcionesDia() {{
       const vehId = selVeh.value;
       const dia = selDia.value;
@@ -608,8 +599,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       actualizarMapa();
     }}
 
-    // 5. Renderizado Dinámico de Paradas y Rutas
-    function renderizarParadas(paradas, conductor) {{
+    function renderizarParadas(paradas, conductor, indicesActivos = []) {{
       capaParadas.clearLayers();
       const stopsList = document.getElementById('stops-list');
       stopsList.innerHTML = '';
@@ -618,12 +608,16 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       const mostrarEnMapa = document.getElementById('check-mostrar-paradas').checked;
       const tamanoProporcional = document.getElementById('check-tamano-proporcional').checked;
 
-      // Filtrar por el umbral seleccionado
-      const paradasFiltradas = paradas.filter(p => p.duracion_min >= umbralMin);
+      // Filtrar solo paradas correspondientes a las rutas marcadas y >= umbral seleccionado
+      const paradasFiltradas = paradas.filter(p => {{
+        const perteneceARutaActiva = indicesActivos.includes(p.viaje_idx);
+        return perteneceARutaActiva && (p.duracion_min >= umbralMin);
+      }});
+
       document.getElementById('label-conteo-paradas').textContent = `Paradas (&ge; ${{umbralMin}} min): ${{paradasFiltradas.length}}`;
 
       if (paradasFiltradas.length === 0) {{
-        stopsList.innerHTML = `<div style="color:#64748b; padding:4px; font-size:11px;">Sin paradas mayores a ${{umbralMin}} min.</div>`;
+        stopsList.innerHTML = `<div style="color:#64748b; padding:4px; font-size:11px;">Sin paradas en los viajes seleccionados (&ge; ${{umbralMin}} min).</div>`;
         return;
       }}
 
@@ -632,7 +626,6 @@ def generar_html_mapa(vehiculos_info, dias, datos):
           ? `${{Math.floor(p.duracion_min/60)}}h ${{Math.round(p.duracion_min%60)}}m` 
           : `${{Math.round(p.duracion_min)}} min`;
 
-        // Añadir a la lista lateral
         const card = document.createElement('div');
         card.className = 'stop-card';
         card.innerHTML = `
@@ -648,10 +641,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
         }};
         stopsList.appendChild(card);
 
-        // Si está habilitado pintar en mapa
         if (mostrarEnMapa) {{
-          // Radio: si es proporcional, escala con raíz cuadrada de la duración (de 8 a 32 px)
-          // Si NO es proporcional, queda en 7 px compacto para no tapar lo que hay debajo
           const radioCirculo = tamanoProporcional 
             ? Math.min(32, Math.round(7 + Math.sqrt(p.duracion_min) * 1.5))
             : 7;
@@ -661,7 +651,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
             color: '#b45309',
             weight: 2,
             fillColor: '#f59e0b',
-            fillOpacity: tamanoProporcional ? 0.38 : 0.85 // Opacidad semitransparente para ver el mapa debajo
+            fillOpacity: tamanoProporcional ? 0.38 : 0.85
           }}).bindPopup(`
             <div style="font-size:12px; line-height:1.4;">
               <b style="color:#b45309; font-size:13px;">🛑 DETENCIÓN REGISTRADA</b><br>
@@ -688,9 +678,12 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       const dia = selDia.value;
       const usarGradiente = document.getElementById('check-gradiente').checked;
 
+      const cbs = document.querySelectorAll('.trip-cb:checked');
+      const indicesActivos = Array.from(cbs).map(cb => parseInt(cb.dataset.idx));
+
       if (!datosGPS[vehId] || !datosGPS[vehId].dias[dia]) {{
         document.getElementById('total-km-badge').textContent = "0.0 km";
-        renderizarParadas([], "");
+        renderizarParadas([], "", []);
         return;
       }}
 
@@ -699,11 +692,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       const conductor = infoVeh.conductor;
       const placa = infoVeh.placa;
 
-      // Renderizar paradas dinámicamente según filtros
-      renderizarParadas(infoDia.paradas, conductor);
-
-      const cbs = document.querySelectorAll('.trip-cb:checked');
-      const indicesActivos = Array.from(cbs).map(cb => parseInt(cb.dataset.idx));
+      renderizarParadas(infoDia.paradas, conductor, indicesActivos);
 
       let kmTotales = 0.0;
       const bounds = [];
@@ -856,35 +845,23 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       map.flyTo([coords[0], coords[1]], 16, {{ duration: 1 }});
     }}
 
-    // Eventos
+    function refrescarFiltroParadas() {{
+      const vehId = selVeh.value;
+      const dia = selDia.value;
+      if (datosGPS[vehId] && datosGPS[vehId].dias[dia]) {{
+        const cbs = document.querySelectorAll('.trip-cb:checked');
+        const indicesActivos = Array.from(cbs).map(cb => parseInt(cb.dataset.idx));
+        renderizarParadas(datosGPS[vehId].dias[dia].paradas, datosGPS[vehId].conductor, indicesActivos);
+      }}
+    }}
+
     selVeh.addEventListener('change', refrescarOpcionesDia);
     selDia.addEventListener('change', refrescarOpcionesDia);
     document.getElementById('check-gradiente').addEventListener('change', actualizarMapa);
 
-    // Eventos interactivos del selector de paradas (filtro en caliente en navegador)
-    document.getElementById('select-umbral-parada').addEventListener('change', () => {{
-      const vehId = selVeh.value;
-      const dia = selDia.value;
-      if (datosGPS[vehId] && datosGPS[vehId].dias[dia]) {{
-        renderizarParadas(datosGPS[vehId].dias[dia].paradas, datosGPS[vehId].conductor);
-      }}
-    }});
-
-    document.getElementById('check-mostrar-paradas').addEventListener('change', () => {{
-      const vehId = selVeh.value;
-      const dia = selDia.value;
-      if (datosGPS[vehId] && datosGPS[vehId].dias[dia]) {{
-        renderizarParadas(datosGPS[vehId].dias[dia].paradas, datosGPS[vehId].conductor);
-      }}
-    }});
-
-    document.getElementById('check-tamano-proporcional').addEventListener('change', () => {{
-      const vehId = selVeh.value;
-      const dia = selDia.value;
-      if (datosGPS[vehId] && datosGPS[vehId].dias[dia]) {{
-        renderizarParadas(datosGPS[vehId].dias[dia].paradas, datosGPS[vehId].conductor);
-      }}
-    }});
+    document.getElementById('select-umbral-parada').addEventListener('change', refrescarFiltroParadas);
+    document.getElementById('check-mostrar-paradas').addEventListener('change', refrescarFiltroParadas);
+    document.getElementById('check-tamano-proporcional').addEventListener('change', refrescarFiltroParadas);
 
     refrescarOpcionesDia();
   </script>
@@ -901,4 +878,4 @@ if __name__ == "__main__":
     ruta = os.path.join("docs", "rutas_gps.html")
     with open(ruta, "w", encoding="utf-8") as f:
         f.write(html_out)
-    print(f"Visor GPS con control dinámico de paradas generado exitosamente en: {ruta}")
+    print(f"Visor GPS con viajes continuos y paradas filtrables generado exitosamente en: {ruta}")
