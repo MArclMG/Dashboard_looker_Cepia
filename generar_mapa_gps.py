@@ -30,6 +30,32 @@ def obtener_datos():
     ws = sh.worksheet("Looker_GPS")
     return pd.DataFrame(ws.get_all_records())
 
+def fusionar_paradas_cercanas(paradas, max_dist_m=45.0):
+    """
+    Fusiona paradas consecutivas en el mismo sitio físico (< 45 m)
+    evitando fragmentación por pings periódicos del GPS.
+    """
+    if not paradas:
+        return []
+    
+    fused = [paradas[0]]
+    for p in paradas[1:]:
+        prev = fused[-1]
+        dist_m = haversine_km(prev['lat'], prev['lon'], p['lat'], p['lon']) * 1000.0
+        
+        # Si están en el mismo punto físico, se fusionan
+        if dist_m <= max_dist_m:
+            prev['fin'] = p['fin']
+            prev['duracion_min'] = round(prev['duracion_min'] + p['duracion_min'], 1)
+            if p.get('tipo') == 'Motor Apagado' or prev.get('tipo') == 'Motor Apagado':
+                prev['tipo'] = 'Motor Apagado'
+            if p.get('viaje_idx', 0) > prev.get('viaje_idx', 0):
+                prev['viaje_idx'] = p.get('viaje_idx')
+        else:
+            fused.append(p)
+            
+    return fused
+
 def procesar_telemetria_viajes(df):
     df['Latitud'] = pd.to_numeric(df['Latitud'], errors='coerce')
     df['Longitud'] = pd.to_numeric(df['Longitud'], errors='coerce')
@@ -92,10 +118,11 @@ def procesar_telemetria_viajes(df):
             UMBRAL_DETECCION_PARADA_MIN = 3.0
 
             viajes = []
-            paradas = []
+            paradas_candidatas = []
             puntos_viaje_actual = []
             nodo_reanudacion = None
             viaje_actual_idx = 0
+            ultimo_punto_viaje_previo = None
 
             for i in range(len(sub)):
                 fila = sub.iloc[i]
@@ -105,20 +132,32 @@ def procesar_telemetria_viajes(df):
                     siguiente = sub.iloc[i + 1]
                     delta_min = (siguiente['dt'] - fila['dt']).total_seconds() / 60.0
                     
-                    # 1. Registrar Parada con vinculación a viaje_idx
+                    # Identificar eventos de ignición en la ventana
+                    ev_actual = str(fila.get('Evento', ''))
+                    ev_sig = str(siguiente.get('Evento', ''))
+                    hubo_motor_off = ('OFF' in ev_actual.upper()) or ('OFF' in ev_sig.upper())
+                    tipo_parada = "Motor Apagado" if hubo_motor_off else "Ralentí (Motor ON)"
+
+                    # 1. Registrar Parada si supera el umbral mínimo (>= 3 min)
                     if delta_min >= UMBRAL_DETECCION_PARADA_MIN:
-                        paradas.append({
+                        paradas_candidatas.append({
                             'viaje_idx': viaje_actual_idx,
                             'inicio': str(fila['Hora']),
                             'fin': str(siguiente['Hora']),
                             'duracion_min': round(delta_min, 1),
+                            'tipo': tipo_parada,
                             'lat': float(fila['Latitud']),
                             'lon': float(fila['Longitud']),
                             'direccion': str(fila.get('Direccion', 'En ruta'))
                         })
 
-                    # 2. Partir viaje macro únicamente en paradas prolongadas (>= 25 min)
+                    # 2. Cortar viaje macro únicamente en paradas prolongadas (>= 25 min)
                     if delta_min >= UMBRAL_CORTE_VIAJE_MIN:
+                        # Asegurar continuidad: si veníamos de un viaje anterior, conectar el inicio
+                        if ultimo_punto_viaje_previo is not None and len(puntos_viaje_actual) > 0:
+                            if puntos_viaje_actual[0]['dt'] != ultimo_punto_viaje_previo['dt']:
+                                puntos_viaje_actual.insert(0, ultimo_punto_viaje_previo)
+
                         pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
                         km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
                         
@@ -128,7 +167,9 @@ def procesar_telemetria_viajes(df):
                                 'km': round(km_viaje, 1),
                                 'reanudacion': nodo_reanudacion
                             })
+                            ultimo_punto_viaje_previo = puntos_viaje_actual[-1]
                             viaje_actual_idx += 1
+                        
                         puntos_viaje_actual = []
                         nodo_reanudacion = {
                             'lat': float(siguiente['Latitud']),
@@ -138,6 +179,10 @@ def procesar_telemetria_viajes(df):
                         }
 
             if puntos_viaje_actual:
+                if ultimo_punto_viaje_previo is not None and len(puntos_viaje_actual) > 0:
+                    if puntos_viaje_actual[0]['dt'] != ultimo_punto_viaje_previo['dt']:
+                        puntos_viaje_actual.insert(0, ultimo_punto_viaje_previo)
+
                 pts_coords = [[p['Latitud'], p['Longitud']] for p in puntos_viaje_actual]
                 km_viaje = sum(haversine_km(pts_coords[k-1][0], pts_coords[k-1][1], pts_coords[k][0], pts_coords[k][1]) for k in range(1, len(pts_coords)))
                 if km_viaje >= 0.3:
@@ -146,6 +191,9 @@ def procesar_telemetria_viajes(df):
                         'km': round(km_viaje, 1),
                         'reanudacion': nodo_reanudacion
                     })
+
+            # FUSIONAR PARADAS CONTIGUAS (< 45 metros)
+            paradas_fusionadas = fusionar_paradas_cercanas(paradas_candidatas)
 
             viajes_json = []
             for num_v, v_item in enumerate(viajes):
@@ -202,7 +250,7 @@ def procesar_telemetria_viajes(df):
 
             estructura[v]['dias'][dia] = {
                 'viajes': viajes_json,
-                'paradas': paradas,
+                'paradas': paradas_fusionadas,
                 'inicio_dia': [float(sub.iloc[0]['Latitud']), float(sub.iloc[0]['Longitud']), str(sub.iloc[0]['Hora'])],
                 'fin_dia': [float(sub.iloc[-1]['Latitud']), float(sub.iloc[-1]['Longitud']), str(sub.iloc[-1]['Hora'])]
             }
@@ -363,7 +411,8 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       border-radius: 4px;
     }}
     .stop-card:hover {{ background: #fef3c7; }}
-    .stop-time {{ font-weight: 700; color: #b45309; }}
+    .stop-badge-off {{ color: #b45309; font-weight: 700; }}
+    .stop-badge-idle {{ color: #7c3aed; font-weight: 700; }}
 
     .gradient-preview {{
       height: 8px;
@@ -608,7 +657,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       const mostrarEnMapa = document.getElementById('check-mostrar-paradas').checked;
       const tamanoProporcional = document.getElementById('check-tamano-proporcional').checked;
 
-      // Filtrar solo paradas correspondientes a las rutas marcadas y >= umbral seleccionado
+      // Filtrar paradas de rutas activas y >= umbral
       const paradasFiltradas = paradas.filter(p => {{
         const perteneceARutaActiva = indicesActivos.includes(p.viaje_idx);
         return perteneceARutaActiva && (p.duracion_min >= umbralMin);
@@ -617,7 +666,7 @@ def generar_html_mapa(vehiculos_info, dias, datos):
       document.getElementById('label-conteo-paradas').textContent = `Paradas (&ge; ${{umbralMin}} min): ${{paradasFiltradas.length}}`;
 
       if (paradasFiltradas.length === 0) {{
-        stopsList.innerHTML = `<div style="color:#64748b; padding:4px; font-size:11px;">Sin paradas en los viajes seleccionados (&ge; ${{umbralMin}} min).</div>`;
+        stopsList.innerHTML = `<div style="color:#64748b; padding:4px; font-size:11px;">Sin paradas en las rutas seleccionadas.</div>`;
         return;
       }}
 
@@ -626,17 +675,21 @@ def generar_html_mapa(vehiculos_info, dias, datos):
           ? `${{Math.floor(p.duracion_min/60)}}h ${{Math.round(p.duracion_min%60)}}m` 
           : `${{Math.round(p.duracion_min)}} min`;
 
+        const esMotorOff = p.tipo === "Motor Apagado";
+        const badgeClass = esMotorOff ? "stop-badge-off" : "stop-badge-idle";
+        const iconPrefix = esMotorOff ? "🛑 Faena (OFF)" : "⏳ Ralentí (ON)";
+
         const card = document.createElement('div');
         card.className = 'stop-card';
         card.innerHTML = `
-          <div><span class="stop-time">🛑 #${{pIdx + 1}} (${{durStr}}):</span> ${{p.inicio}} &rarr; ${{p.fin}}</div>
+          <div><span class="${{badgeClass}}">${{iconPrefix}} #${{pIdx + 1}} (${{durStr}}):</span> ${{p.inicio}} &rarr; ${{p.fin}}</div>
           <div style="color:#475569; font-size:10px; margin-top:2px;">${{p.direccion}}</div>
         `;
         card.onclick = () => {{
           map.flyTo([p.lat, p.lon], 16, {{ duration: 1 }});
           L.popup()
             .setLatLng([p.lat, p.lon])
-            .setContent(`<b>🛑 PARADA REGISTRADA #${{pIdx + 1}}</b><br>Conductor: <b>${{conductor}}</b><br>Horario: ${{p.inicio}} &rarr; ${{p.fin}}<br>Duración: ${{durStr}}<br>Lugar: ${{p.direccion}}`)
+            .setContent(`<b>${{iconPrefix.toUpperCase()}} #${{pIdx + 1}}</b><br>Conductor: <b>${{conductor}}</b><br>Horario: ${{p.inicio}} &rarr; ${{p.fin}}<br>Duración: ${{durStr}}<br>Estado Motor: <b>${{p.tipo}}</b><br>Lugar: ${{p.direccion}}`)
             .openOn(map);
         }};
         stopsList.appendChild(card);
@@ -646,23 +699,27 @@ def generar_html_mapa(vehiculos_info, dias, datos):
             ? Math.min(32, Math.round(7 + Math.sqrt(p.duracion_min) * 1.5))
             : 7;
 
+          const colorBorde = esMotorOff ? '#b45309' : '#6d28d9';
+          const colorRelleno = esMotorOff ? '#f59e0b' : '#8b5cf6';
+
           const circle = L.circleMarker([p.lat, p.lon], {{
             radius: radioCirculo,
-            color: '#b45309',
+            color: colorBorde,
             weight: 2,
-            fillColor: '#f59e0b',
+            fillColor: colorRelleno,
             fillOpacity: tamanoProporcional ? 0.38 : 0.85
           }}).bindPopup(`
             <div style="font-size:12px; line-height:1.4;">
-              <b style="color:#b45309; font-size:13px;">🛑 DETENCIÓN REGISTRADA</b><br>
+              <b style="color:${{colorBorde}}; font-size:13px;">${{iconPrefix.toUpperCase()}}</b><br>
               <b>Conductor:</b> ${{conductor}}<br>
               <b>Duración:</b> ${{durStr}}<br>
               <b>Horario:</b> ${{p.inicio}} &rarr; ${{p.fin}}<br>
+              <b>Condición:</b> ${{p.tipo}}<br>
               <b>Lugar:</b> ${{p.direccion}}
             </div>
           `);
 
-          circle.bindTooltip(`🛑 ${{durStr}} (${{p.inicio}})`, {{ direction: 'top', offset: [0, -radioCirculo] }});
+          circle.bindTooltip(`${{esMotorOff ? '🛑' : '⏳'}} ${{durStr}} (${{p.inicio}})`, {{ direction: 'top', offset: [0, -radioCirculo] }});
           capaParadas.addLayer(circle);
         }}
       }});
@@ -878,4 +935,4 @@ if __name__ == "__main__":
     ruta = os.path.join("docs", "rutas_gps.html")
     with open(ruta, "w", encoding="utf-8") as f:
         f.write(html_out)
-    print(f"Visor GPS con viajes continuos y paradas filtrables generado exitosamente en: {ruta}")
+    print(f"Visor GPS actualizado con continuidad de rutas y paradas consolidadas: {ruta}")
