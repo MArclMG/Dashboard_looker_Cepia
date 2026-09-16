@@ -44,11 +44,12 @@ jobs:
         run: |
           python generar_grafo.py
 
-      - name: Ejecutar script de rutas GPS de camionetas
-        env:
-          GPS_SPREADSHEET_ID: "1n-edOD5p1K99m2m78SoTlJSnXDU_rY69Vxk5yttPgHg"
+      - name: Visor GPS desactivado temporalmente
+        run: echo "Visor GPS desactivado temporalmente"
+
+      - name: Eliminar visor GPS del sitio publico
         run: |
-          python generar_mapa_gps.py
+          rm -f docs/rutas_gps.html
 
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
