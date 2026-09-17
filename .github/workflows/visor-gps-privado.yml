@@ -42,6 +42,17 @@ jobs:
           mkdir -p cloudflare-gps
           mv docs/rutas_gps.html cloudflare-gps/index.html
 
+      - name: Diagnosticar archivos antes de desplegar
+        run: |
+          echo "=== wrangler.jsonc ==="
+          sed -n '1,160p' wrangler.jsonc
+
+          echo "=== src/worker.js ==="
+          sed -n '1,120p' src/worker.js
+
+          echo "=== cloudflare-gps ==="
+          ls -lh cloudflare-gps || true
+
       - name: Desplegar visor GPS privado en Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
