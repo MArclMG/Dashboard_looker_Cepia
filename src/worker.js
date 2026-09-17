@@ -55,10 +55,24 @@ function safeEqual(a, b) {
 
 export default {
   async fetch(request, env) {
-    return new Response("WORKER ACTIVO - prueba", {
+    const credentials = getBasicAuth(request);
+
+    const validUser = safeEqual(credentials?.user, env.VISOR_USER);
+    const validPass = safeEqual(credentials?.pass, env.VISOR_PASSWORD);
+
+    if (!validUser || !validPass) {
+      return unauthorized();
+    }
+
+    const response = await env.ASSETS.fetch(request);
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
       headers: {
-        "Content-Type": "text/plain",
-        "Cache-Control": "no-store",
+        ...Object.fromEntries(response.headers),
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
       },
     });
   },
