@@ -1,6 +1,8 @@
 name: Actualizar visor GPS privado en Cloudflare
 
 on:
+  schedule:
+    - cron: '0 16 * * 1'
   workflow_dispatch:
 
 jobs:
